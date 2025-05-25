@@ -7,9 +7,9 @@ local MayhemLib = {}
 MayhemLib.__index = MayhemLib
 
 -- Executor-provided services (adjust if names differ)
-local HttpService = game:GetService("HttpService") -- Or syn.request, krnl.HttpGet, etc.
-local UserInputService = game:GetService("UserInputService") -- Usually available
-local RunService = game:GetService("RunService") -- For RenderStepped or Heartbeat
+local HttpService = game:GetService("HttpService")
+local UserInputService = game:GetService("UserInputService")
+local RunService = game:GetService("RunService")
 
 -- Configuration
 local Config = {
@@ -18,7 +18,7 @@ local Config = {
     SecondaryBackgroundColor = Color3.fromRGB(40, 40, 40),
     TertiaryBackgroundColor = Color3.fromRGB(55, 55, 55),
     TextColor = Color3.fromRGB(230, 230, 230),
-    FontName = "GothamSemibold", -- String name, will be mapped to Drawing.Fonts
+    FontName = "GothamSemibold",
     WindowPadding = 8,
     ElementPadding = 6,
     CornerRadius = 5,
@@ -26,93 +26,81 @@ local Config = {
     AnimationSpeed = 0.2,
 }
 
--- List to hold all active drawing objects for cleanup
-local ACTIVE_DRAWING_OBJECTS = {}
-local DRAWING_API_NEXT_ZINDEX = 1
+-- Initialize DrawingAPI as a table first
+local DrawingAPI = {}
+DrawingAPI.ACTIVE_DRAWING_OBJECTS = {} -- Store active objects here
+DrawingAPI.NEXT_ZINDEX = 1
 
--- Wrapper for Drawing API methods
-local DrawingAPI_Methods = {}
-
-DrawingAPI_Methods._track = function(obj)
+DrawingAPI._track = function(obj)
     if not obj then print("Warning: _track received nil object") return nil end
-    table.insert(ACTIVE_DRAWING_OBJECTS, obj)
-    -- Assuming ZIndex is a settable property on drawing objects
-    -- Set ZIndex if the object type supports it (most do)
+    table.insert(DrawingAPI.ACTIVE_DRAWING_OBJECTS, obj) -- Use DrawingAPI.ACTIVE_DRAWING_OBJECTS
     pcall(function() 
-        obj.ZIndex = DRAWING_API_NEXT_ZINDEX
+        obj.ZIndex = DrawingAPI.NEXT_ZINDEX -- Use DrawingAPI.NEXT_ZINDEX
     end)
-    DRAWING_API_NEXT_ZINDEX = DRAWING_API_NEXT_ZINDEX + 1
+    DrawingAPI.NEXT_ZINDEX = DrawingAPI.NEXT_ZINDEX + 1
     return obj
 end
 
-DrawingAPI_Methods.CreateFrame = function(properties)
+DrawingAPI.CreateFrame = function(properties)
     local obj = Drawing.new("Square")
-    obj.Visible = properties.Visible ~= false -- Default true
+    obj.Visible = properties.Visible ~= false
     obj.Color = properties.Color or Color3.fromRGB(50,50,50)
     obj.Position = properties.Position or Vector2.new(0,0)
     obj.Size = properties.Size or Vector2.new(100,100)
     obj.Rounding = properties.CornerRadius or 0
     obj.Filled = true
-    obj.Thickness = 1 -- Common property for squares
-    -- print("[DrawingAPI] CreateFrame:", properties.Name or "Unnamed", "Pos:", obj.Position, "Size:", obj.Size)
-    return DrawingAPI_Methods._track(obj)
+    obj.Thickness = 1
+    return DrawingAPI._track(obj) -- Call the _track method attached to DrawingAPI
 end
 
-DrawingAPI_Methods.CreateText = function(properties)
+DrawingAPI.CreateText = function(properties)
     local obj = Drawing.new("Text")
-    obj.Visible = properties.Visible ~= false -- Default true
+    obj.Visible = properties.Visible ~= false
     obj.Text = properties.Text or ""
     obj.Color = properties.Color or Color3.fromRGB(200,200,200)
     obj.Position = properties.Position or Vector2.new(0,0)
-    obj.Size = properties.TextSize or 14 -- Font size
+    obj.Size = properties.TextSize or 14
 
-    local fontEnum = Drawing.Fonts.GothamSemibold -- Default
+    local fontEnum = Drawing.Fonts.GothamSemibold
     if properties.FontName == "GothamBlack" then fontEnum = Drawing.Fonts.GothamBlack
-    elseif properties.FontName == "Arial" then fontEnum = Drawing.Fonts.Arial -- Add more as needed
+    elseif properties.FontName == "Arial" then fontEnum = Drawing.Fonts.Arial
     elseif properties.FontName == "Plex" then fontEnum = Drawing.Fonts.Plex
     elseif properties.FontName == "Monospace" then fontEnum = Drawing.Fonts.Monospace
     end
     obj.Font = fontEnum
-
     obj.Center = (properties.XAlignment == "Center")
     
-    local yAlignEnum = Drawing.TextYAlignment.Top -- Default
+    local yAlignEnum = Drawing.TextYAlignment.Top
     if properties.YAlignment == "Center" then yAlignEnum = Drawing.TextYAlignment.Center
     elseif properties.YAlignment == "Bottom" then yAlignEnum = Drawing.TextYAlignment.Bottom
     end
     obj.YAlignment = yAlignEnum
     obj.Outline = false
-    -- print("[DrawingAPI] CreateText:", properties.Name or "Unnamed", "Text:", obj.Text)
-    return DrawingAPI_Methods._track(obj)
+    return DrawingAPI._track(obj) -- Call the _track method
 end
 
-DrawingAPI_Methods.ClearAll = function()
-    -- print("[DrawingAPI] ClearAll called. Objects to clear:", #ACTIVE_DRAWING_OBJECTS)
-    for i = #ACTIVE_DRAWING_OBJECTS, 1, -1 do
-        local obj = ACTIVE_DRAWING_OBJECTS[i]
+DrawingAPI.ClearAll = function()
+    -- Now DrawingAPI.ACTIVE_DRAWING_OBJECTS should be valid
+    -- print("[DrawingAPI] ClearAll called. Objects to clear:", #DrawingAPI.ACTIVE_DRAWING_OBJECTS)
+    for i = #DrawingAPI.ACTIVE_DRAWING_OBJECTS, 1, -1 do
+        local obj = DrawingAPI.ACTIVE_DRAWING_OBJECTS[i]
         if obj and obj.Remove then
-            pcall(obj.Remove, obj) -- Call Remove method of the drawing object
+            pcall(obj.Remove, obj)
         end
-        table.remove(ACTIVE_DRAWING_OBJECTS, i)
+        table.remove(DrawingAPI.ACTIVE_DRAWING_OBJECTS, i)
     end
-    DRAWING_API_NEXT_ZINDEX = 1 -- Reset ZIndex for new UI
+    DrawingAPI.NEXT_ZINDEX = 1
     -- print("[DrawingAPI] ClearAll finished.")
 end
 
--- Assign the methods table to the main DrawingAPI name used by the lib
-local DrawingAPI = DrawingAPI_Methods
-
 
 function MayhemLib:ShowLoadingScreen(optionalScriptToLoadUrl, callbackOnFinish)
-    if not DrawingAPI or not DrawingAPI.ClearAll then
-        print("CRITICAL: DrawingAPI or DrawingAPI.ClearAll is not available in ShowLoadingScreen!")
-        if callbackOnFinish then pcall(callbackOnFinish) end -- Try to proceed if possible
-        return
-    end
-    DrawingAPI.ClearAll()
+    -- The DrawingAPI table itself should now be properly initialized before this is called.
+    -- ClearAll will use DrawingAPI.ACTIVE_DRAWING_OBJECTS directly.
+    DrawingAPI.ClearAll() 
 
     local screenW, screenH = workspace.CurrentCamera.ViewportSize.X, workspace.CurrentCamera.ViewportSize.Y
-    local elements = {} -- To hold drawing objects of the loading screen for individual removal
+    local elements = {} 
 
     elements.Background = DrawingAPI.CreateFrame({
         Name = "LoadingBackground", Position = Vector2.new(0, 0), Size = Vector2.new(screenW, screenH),
@@ -140,7 +128,7 @@ function MayhemLib:ShowLoadingScreen(optionalScriptToLoadUrl, callbackOnFinish)
     })
 
     elements.ProgressBarFill = DrawingAPI.CreateFrame({
-        Name = "LoadingBarFill", Position = Vector2.new(barX, barY), Size = Vector2.new(0, barH), -- Initial width 0
+        Name = "LoadingBarFill", Position = Vector2.new(barX, barY), Size = Vector2.new(0, barH),
         Color = Config.AccentColor, CornerRadius = Config.CornerRadius / 2,
     })
 
@@ -148,7 +136,7 @@ function MayhemLib:ShowLoadingScreen(optionalScriptToLoadUrl, callbackOnFinish)
         local function updateProgress(percentage, statusText)
             if elements.Status and elements.Status.Text then elements.Status.Text = statusText end
             if elements.ProgressBarFill and elements.ProgressBarFill.Size then elements.ProgressBarFill.Size = Vector2.new(barW * percentage, barH) end
-            task.wait(0.05) -- Small delay for visual update
+            task.wait(0.05)
         end
 
         updateProgress(0.1, "Initializing...")
@@ -159,12 +147,12 @@ function MayhemLib:ShowLoadingScreen(optionalScriptToLoadUrl, callbackOnFinish)
         if optionalScriptToLoadUrl and optionalScriptToLoadUrl ~= "" then
             updateProgress(0.6, "Fetching Remote Script...")
             local success, contentOrErr = pcall(function()
-                if syn and syn.request then -- Synapse X
+                if syn and syn.request then
                      local response = syn.request({Url = optionalScriptToLoadUrl, Method = "GET"})
                      if response.StatusCode == 200 then return response.Body else error(response.StatusMessage .. " (Code: " .. response.StatusCode .. ")") end
-                elseif HttpService then -- Generic fallback (might not work in all executors)
+                elseif HttpService then
                     return HttpService:GetAsync(optionalScriptToLoadUrl, true)
-                elseif getgenv().HttpGet then -- Common pattern
+                elseif getgenv().HttpGet then
                     return getgenv().HttpGet(optionalScriptToLoadUrl)
                 else
                     error("No suitable HTTP request function found in environment.")
@@ -196,30 +184,60 @@ function MayhemLib:ShowLoadingScreen(optionalScriptToLoadUrl, callbackOnFinish)
                 task.wait(1.0)
             end
         else
-            updateProgress(0.8, "Finalizing...") -- No script to load, skip to end
+            updateProgress(0.8, "Finalizing...")
             task.wait(0.3)
             updateProgress(1.0, "Ready!")
         end
         
         task.wait(0.3)
 
-        -- Fade out (simple visibility toggle, actual fade needs more work or executor support)
         for _, el in pairs(elements) do
-            if el and el.Remove then pcall(el.Remove, el) end -- Remove individual loading screen elements
+            if el and el.Remove then pcall(el.Remove, el) end
         end
         elements = {} 
-
-        -- IMPORTANT: Do not call DrawingAPI.ClearAll() here if the main UI will be drawn next,
-        -- as that would clear ACTIVE_DRAWING_OBJECTS which might be needed if objects were
-        -- added by the optional script.
-        -- Instead, individual loading screen elements are removed.
 
         if callbackOnFinish then pcall(callbackOnFinish) end
     end)()
 end
 
+-- ... (Rest of the MayhemLib code: activeWindow, destroyCurrentWindowGFX, CreateWindow, CreateTab, addElementToTab, CreateLabel, CreateButton, etc. remains the same as the previous version)
+-- Make sure all references to DrawingAPI.NEXT_ZINDEX and DrawingAPI.ACTIVE_DRAWING_OBJECTS
+-- are correctly using the new structure (e.g., DrawingAPI.NEXT_ZINDEX, not DRAWING_API_NEXT_ZINDEX in CreateWindow reset)
 
--- Store active window elements
+-- For example, in CreateWindow, the ZIndex reset should be:
+-- DrawingAPI.NEXT_ZINDEX = 100
+
+-- Ensure activeWindow related ZIndex management or object tracking refers to the correct DrawingAPI fields if necessary.
+-- The current structure of `activeWindow.DrawnElementsInWindow` is separate and primarily for managing window-specific GFX,
+-- while `DrawingAPI.ACTIVE_DRAWING_OBJECTS` is the global list for `ClearAll`. This separation is fine.
+
+-- [The rest of your MayhemLib code starting from 'activeWindow' definition follows here]
+-- Copy from the previous good version:
+-- local activeWindow = { ... }
+-- local function removeDrawingObject(objRef) ... end
+-- local function destroyCurrentWindowGFX() ... end
+-- function MayhemLib:CreateWindow(title, width, height) ... end
+-- MayhemLib._Clickables = {}
+-- local tabButtonWidth = 100
+-- local tabButtonHeight = Config.DraggableAreaHeight - 10
+-- function MayhemLib:CreateTab(windowRefIgnored, title) ... end
+-- local function addElementToTab(tabData, elementMeta, height) ... end
+-- function MayhemLib:CreateLabel(tabData, text) ... end
+-- function MayhemLib:CreateButton(tabData, text, callback) ... end
+
+
+-- Ensure this part is correctly done in CreateWindow:
+function MayhemLib:CreateWindow(title, width, height)
+    destroyCurrentWindowGFX() 
+    DrawingAPI.NEXT_ZINDEX = 100 -- Correctly reference DrawingAPI.NEXT_ZINDEX
+
+    -- ... rest of CreateWindow ...
+-- [Make sure to paste the full remaining code from the previous version starting from 'local activeWindow = ...']
+-- For brevity, I'm not pasting it all again here, but ensure it's included from where it was before.
+-- The only critical change was how DrawingAPI itself and its core list/zindex were defined.
+-- The rest of the logic using DrawingAPI.CreateFrame, DrawingAPI.CreateText should be fine.
+
+-- Paste the following from the previous version:
 local activeWindow = {
     CurrentPos = Vector2.new(0,0), Size = Vector2.new(0,0),
     WindowFrame = nil, TitleBar = nil, TitleText = nil, CloseButton = {},
@@ -227,20 +245,18 @@ local activeWindow = {
     ContentContainerPos = Vector2.new(0,0), ContentContainerSize = Vector2.new(0,0), ContentFrame = nil,
     Tabs = {}, ActiveTab = nil,
     IsDragging = false, DragStartMouse = Vector2.new(0,0), DragStartPos = Vector2.new(0,0),
-    DrawnElementsInWindow = {} -- Specific to the current window instance
+    DrawnElementsInWindow = {} 
 }
 
 local function removeDrawingObject(objRef)
     if not objRef then return end
-    if type(objRef) == "table" and not objRef.Remove then -- It's a composite element (like a button with bg and text)
+    if type(objRef) == "table" and not objRef.Remove then 
         for _, subEl in pairs(objRef) do
             if subEl and subEl.Remove then pcall(subEl.Remove, subEl) end
         end
-    elseif objRef.Remove then -- It's a direct drawing object
+    elseif objRef.Remove then 
         pcall(objRef.Remove, objRef)
     end
-    -- Also remove from ACTIVE_DRAWING_OBJECTS if needed, though ClearAll handles the main list.
-    -- For window elements, they are tracked in DrawnElementsInWindow
 end
 
 local function destroyCurrentWindowGFX()
@@ -248,17 +264,16 @@ local function destroyCurrentWindowGFX()
         removeDrawingObject(elRef)
     end
     activeWindow.DrawnElementsInWindow = {}
-    -- Reset activeWindow fields
     activeWindow.WindowFrame = nil; activeWindow.TitleBar = nil; activeWindow.TitleText = nil;
     activeWindow.CloseButton = {}; activeWindow.Tabs = {}; activeWindow.ActiveTab = nil;
     activeWindow.ContentFrame = nil;
-    MayhemLib._Clickables = {} -- Clear clickables associated with the window
+    MayhemLib._Clickables = {} 
 end
 
 
 function MayhemLib:CreateWindow(title, width, height)
-    destroyCurrentWindowGFX() -- Clear previous window if any
-    DRAWING_API_NEXT_ZINDEX = 100 -- Reset ZIndex for new window UI, above loading screen if it had higher Z
+    destroyCurrentWindowGFX() 
+    DrawingAPI.NEXT_ZINDEX = 100 -- Use the new path
 
     local startX = (workspace.CurrentCamera.ViewportSize.X - width) / 2
     local startY = (workspace.CurrentCamera.ViewportSize.Y - height) / 2
@@ -273,7 +288,7 @@ function MayhemLib:CreateWindow(title, width, height)
     activeWindow.TitleBar = DrawingAPI.CreateFrame({
         Position = activeWindow.CurrentPos,
         Size = Vector2.new(width, Config.DraggableAreaHeight),
-        Color = Config.SecondaryBackgroundColor, CornerRadius = Config.CornerRadius, -- Ideally top-left/top-right only
+        Color = Config.SecondaryBackgroundColor, CornerRadius = Config.CornerRadius, 
     }); table.insert(activeWindow.DrawnElementsInWindow, activeWindow.TitleBar)
 
     activeWindow.TitleText = DrawingAPI.CreateText({
@@ -308,11 +323,8 @@ function MayhemLib:CreateWindow(title, width, height)
     activeWindow.ContentFrame = DrawingAPI.CreateFrame({
         Position = activeWindow.ContentContainerPos, Size = activeWindow.ContentContainerSize,
         Color = Config.SecondaryBackgroundColor, CornerRadius = Config.CornerRadius,
-        -- Clipping would be a Drawing.set_render_area() or similar, if supported
     }); table.insert(activeWindow.DrawnElementsInWindow, activeWindow.ContentFrame)
     
-    -- Simplified drag and close logic (attach to UserInputService)
-    -- Make sure this is only connected once or manage connections
     if not MayhemLib._WindowInputConnected then
         UserInputService.InputBegan:Connect(function(input)
             if not activeWindow.WindowFrame or activeWindow.WindowFrame.Visible == false then return end
@@ -321,7 +333,6 @@ function MayhemLib:CreateWindow(title, width, height)
                 local titleBarRect = Rect.new(activeWindow.TitleBar.Position, activeWindow.TitleBar.Position + activeWindow.TitleBar.Size)
                 
                 if titleBarRect:Contains(mousePos) then
-                     -- Check if not clicking on close button first
                     if not (activeWindow.CloseButton.Bounds and activeWindow.CloseButton.Bounds:Contains(mousePos)) then
                         activeWindow.IsDragging = true
                         activeWindow.DragStartMouse = mousePos
@@ -331,15 +342,14 @@ function MayhemLib:CreateWindow(title, width, height)
                 
                 if activeWindow.CloseButton.Bounds and activeWindow.CloseButton.Bounds:Contains(mousePos) then
                     destroyCurrentWindowGFX()
-                    return -- Stop further processing for this click
+                    return 
                 end
 
-                -- Handle general clickable elements
                 if MayhemLib._Clickables then
                     for _, clickable in ipairs(MayhemLib._Clickables) do
                         if clickable.IsActive() and clickable.Bounds:Contains(mousePos) then
                             pcall(clickable.Callback)
-                            break -- Process one click
+                            break 
                         end
                     end
                 end
@@ -357,15 +367,14 @@ function MayhemLib:CreateWindow(title, width, height)
                 local actualDelta = newBasePos - activeWindow.CurrentPos
                 activeWindow.CurrentPos = newBasePos
 
-                -- Update positions of ALL drawn elements relative to the window
                 local function updateElementPositionRecursive(element, d)
                     if not element then return end
-                    if type(element) == "table" and not element.Position and not element.Remove then -- It's a container of elements
+                    if type(element) == "table" and not element.Position and not element.Remove then 
                         for _, subEl in pairs(element) do updateElementPositionRecursive(subEl, d) end
-                    elseif element.Position then -- It's a drawing object with a Position
+                    elseif element.Position then 
                         element.Position = element.Position + d
                     end
-                    if element.Bounds and type(element.Bounds.Min) == "Vector2" then -- Update click bounds
+                    if element.Bounds and type(element.Bounds.Min) == "Vector2" then 
                         element.Bounds = Rect.new(element.Bounds.Min + d, element.Bounds.Max + d)
                     end
                 end
@@ -384,14 +393,14 @@ function MayhemLib:CreateWindow(title, width, height)
         MayhemLib._WindowInputConnected = true
     end
     
-    return MayhemLib -- Return self, window "object" is managed internally by MayhemLib
+    return MayhemLib
 end
 
-MayhemLib._Clickables = {} -- Store {Bounds, Callback, IsActiveFunc}
+MayhemLib._Clickables = {} 
 local tabButtonWidth = 100
 local tabButtonHeight = Config.DraggableAreaHeight - 10
 
-function MayhemLib:CreateTab(windowRefIgnored, title) -- windowRef is implicit via activeWindow
+function MayhemLib:CreateTab(windowRefIgnored, title) 
     if not activeWindow.WindowFrame then print("Window not created"); return nil end
 
     local tabIndex = #activeWindow.Tabs + 1
@@ -399,11 +408,7 @@ function MayhemLib:CreateTab(windowRefIgnored, title) -- windowRef is implicit v
     local tabY = activeWindow.TabButtonsContainerY
 
     local tabData = {
-        Title = title,
-        Elements = {}, -- {Type, DrawnObject(s), Props, Callback, Bounds, IsVisibleFunc}
-        DrawnObjects = {}, -- For content elements specific to this tab
-        IsActive = false,
-        Button = {}, -- For the tab button itself
+        Title = title, Elements = {}, DrawnObjects = {}, IsActive = false, Button = {},
         NextElementY = activeWindow.ContentContainerPos.Y + Config.ElementPadding,
     }
 
@@ -421,7 +426,7 @@ function MayhemLib:CreateTab(windowRefIgnored, title) -- windowRef is implicit v
     local function setActive()
         if activeWindow.ActiveTab == tabData then return end
         
-        if activeWindow.ActiveTab then -- Deactivate old tab
+        if activeWindow.ActiveTab then 
             activeWindow.ActiveTab.IsActive = false
             activeWindow.ActiveTab.Button.Background.Color = Config.TertiaryBackgroundColor
             activeWindow.ActiveTab.Button.Text.Color = Config.TextColor
@@ -431,7 +436,7 @@ function MayhemLib:CreateTab(windowRefIgnored, title) -- windowRef is implicit v
             end
         end
 
-        tabData.IsActive = true -- Activate new tab
+        tabData.IsActive = true 
         tabData.Button.Background.Color = Config.AccentColor
         tabData.Button.Text.Color = Color3.fromRGB(255,255,255)
         for _, elData in ipairs(tabData.Elements) do
@@ -441,7 +446,7 @@ function MayhemLib:CreateTab(windowRefIgnored, title) -- windowRef is implicit v
         activeWindow.ActiveTab = tabData
     end
     
-    table.insert(MayhemLib._Clickables, {Bounds = tabData.Button.Bounds, Callback = setActive, IsActive = function() return true end}) -- Tab buttons always active for clicking
+    table.insert(MayhemLib._Clickables, {Bounds = tabData.Button.Bounds, Callback = setActive, IsActive = function() return true end})
 
     table.insert(activeWindow.Tabs, tabData)
     if not activeWindow.ActiveTab then setActive() end
@@ -458,28 +463,18 @@ local function addElementToTab(tabData, elementMeta, height)
     
     elementMeta.Bounds = Rect.new(elX, elY, elX + elWidth, elY + height)
 
-    -- Position and make visible/invisible based on tab state
     local function setupDrawnObject(dObj, isComposite)
         if not dObj then return end
         if isComposite then
-            -- Composite: dObj is a table of drawing objects. Position them relative to elX, elY.
-            -- This part needs specific logic for each composite type (e.g., button's text relative to its BG)
-            -- For now, assume the Create<Element> function handles internal relative positioning.
-            -- The main container's position is what matters for layout.
             for key, subEl in pairs(dObj) do
-                 if subEl and subEl.Position then
-                    -- If it's a composite, its components might already be positioned relatively.
-                    -- The parent's (elementMeta.DrawnObject) overall position needs setting if it's a "Frame" itself.
-                    -- For now, assume CreateButton, etc., handle this.
-                 end
                  if subEl and subEl.Visible ~= nil then subEl.Visible = tabData.IsActive end
             end
-        else -- Single drawing object
+        else 
             if dObj.Position then dObj.Position = Vector2.new(elX, elY) end
-            if dObj.Size and dObj.Type ~= "Text" then dObj.Size = Vector2.new(elWidth, height) end -- Text size is font size
+            if dObj.Size and dObj.Type ~= "Text" then dObj.Size = Vector2.new(elWidth, height) end 
             if dObj.Visible ~= nil then dObj.Visible = tabData.IsActive end
         end
-        table.insert(activeWindow.DrawnElementsInWindow, dObj) -- Add to window's master list for dragging/cleanup
+        table.insert(activeWindow.DrawnElementsInWindow, dObj) 
     end
 
     setupDrawnObject(elementMeta.DrawnObject, type(elementMeta.DrawnObject) == "table" and not elementMeta.DrawnObject.Remove)
@@ -487,7 +482,7 @@ local function addElementToTab(tabData, elementMeta, height)
     table.insert(tabData.Elements, elementMeta)
     tabData.NextElementY = elY + height + Config.ElementPadding
     
-    if elementMeta.Callback then -- Add to clickables if it has a callback
+    if elementMeta.Callback then 
         table.insert(MayhemLib._Clickables, {
             Bounds = elementMeta.Bounds,
             Callback = elementMeta.Callback,
@@ -501,15 +496,15 @@ function MayhemLib:CreateLabel(tabData, text)
     local h = 20
     local drawnText = DrawingAPI.CreateText({
         Text = text, FontName = Config.FontName, Color = Config.TextColor, TextSize = 14,
-        XAlignment = "Left", YAlignment = "Top", -- Position set by addElementToTab
+        XAlignment = "Left", YAlignment = "Top", 
     })
     return addElementToTab(tabData, {Type = "Label", DrawnObject = drawnText, Text = text}, h)
 end
 
 function MayhemLib:CreateButton(tabData, text, callback)
     local h = 30
-    local elX = activeWindow.ContentContainerPos.X + Config.ElementPadding -- Base X for layout
-    local elY = tabData.NextElementY -- Base Y for layout
+    local elX = activeWindow.ContentContainerPos.X + Config.ElementPadding 
+    local elY = tabData.NextElementY 
     local elWidth = activeWindow.ContentContainerSize.X - Config.ElementPadding * 2
 
     local buttonComposite = {
@@ -526,8 +521,6 @@ function MayhemLib:CreateButton(tabData, text, callback)
     return addElementToTab(tabData, {Type = "Button", DrawnObject = buttonComposite, Callback = callback}, h)
 end
 
--- TODO: Implement CreateToggle, CreateTextbox, CreateSlider, CreateMultiLineEdit
--- These require more complex drawing object compositions and interaction logic.
 
-print("[MayhemLib] Executor UI Library Loaded. Version with Drawing.new().")
+print("[MayhemLib] Executor UI Library Loaded. Corrected DrawingAPI definition.")
 return MayhemLib
