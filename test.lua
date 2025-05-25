@@ -1,326 +1,600 @@
--- MayhemUI (ModuleScript)
--- Version 1.0.0 - For Exploit Script GUIs
-
-local MayhemUI = {}
-MayhemUI.__index = MayhemUI
-
 --[[
-    Services & Constants
+    Mayhem UI Library - Executor Version (Conceptual)
+
+    IMPORTANT: This is a TEMPLATE. You MUST replace `DrawingAPI.*` calls
+    with the specific drawing functions provided by YOUR EXECUTOR.
+    (e.g., Synapse X: Drawing.new(), KRNL: specific krnl functions, etc.)
 ]]
-local TweenService = game:GetService("TweenService")
-local UserInputService = game:GetService("UserInputService")
-local RunService = game:GetService("RunService")
--- local CollectionService = game:GetService("CollectionService") -- For potential global updates (future enhancement)
 
-local SETTINGS = {
-    Theme = "Dark",
-    AccentColor = Color3.fromRGB(0, 122, 204), -- Default Mayhem Blue
-    Font = Enum.Font.GothamSemibold,
-    BaseZIndex = 10000, -- High ZIndex for exploit UIs to overlay game UI
-    AnimationSpeed = 0.15,
+local MayhemLib = {}
+MayhemLib.__index = MayhemLib
+
+-- Assume these services/functions are available or bridged by the executor
+-- If not, you'll need to use executor-specific alternatives.
+local HttpService = game:GetService("HttpService") -- Or executor's equivalent like 'HttpGet'
+local UserInputService = game:GetService("UserInputService") -- Or executor's input functions
+local RunService = game:GetService("RunService") -- For RenderStepped or Heartbeat
+
+-- Configuration (remains largely the same conceptually)
+local Config = {
+    AccentColor = Color3.fromRGB(0, 120, 255),
+    BackgroundColor = Color3.fromRGB(25, 25, 25),
+    SecondaryBackgroundColor = Color3.fromRGB(40, 40, 40),
+    TertiaryBackgroundColor = Color3.fromRGB(55, 55, 55),
+    TextColor = Color3.fromRGB(230, 230, 230),
+    Font = "GothamSemibold", -- Font name might be handled differently by executors
+    WindowPadding = 8,
+    ElementPadding = 6,
+    CornerRadius = 5,
+    DraggableAreaHeight = 32,
+    AnimationSpeed = 0.2, -- May not be directly applicable without TweenService or manual anims
 }
 
-local THEMES = {
-    Dark = {
-        WindowBackground = Color3.fromRGB(28, 28, 28),
-        TitleBarBackground = Color3.fromRGB(38, 38, 38),
-        ContentBackground = Color3.fromRGB(32, 32, 32),
-        ElementBackground = Color3.fromRGB(42, 42, 42),
-        ElementHover = Color3.fromRGB(52, 52, 52),
-        ElementActive = Color3.fromRGB(62, 62, 62),
-        Border = Color3.fromRGB(55, 55, 55),
-        PrimaryText = Color3.fromRGB(235, 235, 235),
-        SecondaryText = Color3.fromRGB(170, 170, 170),
-        DisabledText = Color3.fromRGB(90, 90, 90),
-        ScrollBar = Color3.fromRGB(65, 65, 65),
-    },
-    Light = {
-        WindowBackground = Color3.fromRGB(248, 248, 248),
-        TitleBarBackground = Color3.fromRGB(238, 238, 238),
-        ContentBackground = Color3.fromRGB(242, 242, 242),
-        ElementBackground = Color3.fromRGB(228, 228, 228),
-        ElementHover = Color3.fromRGB(218, 218, 218),
-        ElementActive = Color3.fromRGB(208, 208, 208),
-        Border = Color3.fromRGB(200, 200, 200),
-        PrimaryText = Color3.fromRGB(25, 25, 25),
-        SecondaryText = Color3.fromRGB(85, 85, 85),
-        DisabledText = Color3.fromRGB(165, 165, 165),
-        ScrollBar = Color3.fromRGB(195, 195, 195),
-    }
+-- Placeholder for Executor's Drawing API
+-- You WILL need to replace these with actual executor functions
+local DrawingAPI = {
+    Objects = {}, -- To keep track of drawn objects for cleanup/updates
+    NextZIndex = 1,
+
+    _track = function(obj)
+        table.insert(DrawingAPI.Objects, obj)
+        if obj.ZIndex then obj.ZIndex = DrawingAPI.NextZIndex; DrawingAPI.NextZIndex = DrawingAPI.NextZIndex + 1 end
+        return obj
+    end,
+
+    CreateFrame = function(properties)
+        -- EXAMPLE: return Drawing.new("Square") and set properties
+        local obj = { Type = "Frame", Visible = true, Position = Vector2.new(0,0), Size = Vector2.new(100,100), Color = Color3.new(1,1,1), CornerRadius = 0, ZIndex = 0 }
+        for k,v in pairs(properties or {}) do obj[k] = v end
+        print("[DrawingAPI Stub] CreateFrame:", properties.Name or "Unnamed")
+        return DrawingAPI._track(obj)
+    end,
+    CreateText = function(properties)
+        -- EXAMPLE: return Drawing.new("Text") and set properties
+        local obj = { Type = "Text", Visible = true, Position = Vector2.new(0,0), Text = "Text", Size = 12, Color = Color3.new(1,1,1), Font = "Arial", ZIndex = 0, XAlignment="Left", YAlignment="Top" }
+        for k,v in pairs(properties or {}) do obj[k] = v end
+        print("[DrawingAPI Stub] CreateText:", properties.Name or "Unnamed", "Text:", properties.Text)
+        return DrawingAPI._track(obj)
+    end,
+    ClearAll = function()
+        for _, obj in ipairs(DrawingAPI.Objects) do
+            if obj.Remove then obj:Remove() elseif obj.Destroy then obj:Destroy() end
+        end
+        DrawingAPI.Objects = {}
+        DrawingAPI.NextZIndex = 1
+        print("[DrawingAPI Stub] ClearAll")
+    end,
+    -- Add other necessary functions: CreateLine, CreateImage, GetTextBounds, etc.
 }
-local CurrentTheme = THEMES[SETTINGS.Theme]
 
-local ActiveTweens = setmetatable({}, {__mode = "k"})
 
---[[ Utility Functions ]]
-local function Create(className, properties)
-    local inst = Instance.new(className)
-    for prop, value in pairs(properties or {}) do
-        inst[prop] = value
-    end
-    return inst
+-- Helper function to make Color3 usable by drawing libs that might expect tables or R,G,B
+local function colorToDraw(color3)
+    -- Adapt this if your executor expects {R=1, G=0, B=0} or similar
+    return color3
 end
 
-local function Animate(instance, propertyTable, speedOverride, easingStyle, easingDirection)
-    if ActiveTweens[instance] then ActiveTweens[instance]:Cancel(); ActiveTweens[instance] = nil end
-    local tweenInfo = TweenInfo.new(
-        speedOverride or SETTINGS.AnimationSpeed,
-        easingStyle or Enum.EasingStyle.Quad,
-        easingDirection or Enum.EasingDirection.Out
-    )
-    local tween = TweenService:Create(instance, tweenInfo, propertyTable)
-    ActiveTweens[instance] = tween
-    tween.Completed:Connect(function() ActiveTweens[instance] = nil end)
-    tween:Play()
-    return tween
-end
+function MayhemLib:ShowLoadingScreen(testScriptUrl, callbackOnFinish)
+    DrawingAPI.ClearAll() -- Clear previous UI if any
 
--- Custom Signal Implementation
-local Signal = {}
-Signal.__index = Signal
-function Signal.new() local self = setmetatable({}, Signal); self._connections = {}; return self end
-function Signal:Connect(func) assert(type(func) == "function", "Signal:Connect expects a function."); local c = {}; table.insert(self._connections, {f=func, id=c}); return c end
-function Signal:Disconnect(id) for i=#self._connections,1,-1 do if self._connections[i].id==id then table.remove(self._connections,i); return end end end
-function Signal:Fire(...) for _,c in ipairs(self._connections) do task.spawn(c.f, ...) end end
-function Signal:Destroy() for i=#self._connections,1,-1 do table.remove(self._connections,i) end end
+    local screenW, screenH = workspace.CurrentCamera.ViewportSize.X, workspace.CurrentCamera.ViewportSize.Y
+    local elements = {}
 
---[[ Base UI Element ]]
-local BaseElement = {}
-BaseElement.__index = BaseElement
-function BaseElement:InitBase(elementType)
-    self.Type = elementType; self.Instance = nil; self.Visible = true; self.Enabled = true
-    self.ParentUI = nil; self.ChildrenUI = {}; self.Connections = {}; self.OnDestroy = Signal.new()
-end
-function BaseElement:SetParent(robloxParentInstance) if self.Instance then self.Instance.Parent = robloxParentInstance end end
-function BaseElement:SetVisible(v) self.Visible=v; if self.Instance and self.Instance:IsA("GuiObject") then self.Instance.Visible=v end for _,c in ipairs(self.ChildrenUI) do c:SetVisible(v) end end
-function BaseElement:SetEnabled(e) self.Enabled=e; if self.Instance and self.Instance:IsA("GuiButton") then self.Instance.AutoButtonColor = not e end end
-function BaseElement:_addConnection(rbxConn) table.insert(self.Connections, rbxConn) end
-function BaseElement:Destroy()
-    self.OnDestroy:Fire(); self.OnDestroy:Destroy()
-    for _,c in ipairs(self.ChildrenUI) do c:Destroy() end; table.clear(self.ChildrenUI)
-    for _,c in ipairs(self.Connections) do c:Disconnect() end; table.clear(self.Connections)
-    if ActiveTweens[self.Instance] then ActiveTweens[self.Instance]:Cancel(); ActiveTweens[self.Instance]=nil end
-    if self.Instance then self.Instance:Destroy(); self.Instance=nil end
-    setmetatable(self, nil)
-end
-local function NewElement(elementType, initializerFunc)
-    local obj = setmetatable({}, BaseElement); obj:InitBase(elementType)
-    if initializerFunc then initializerFunc(obj) end
-    return obj
-end
+    elements.Background = DrawingAPI.CreateFrame({
+        Name = "LoadingBackground",
+        Position = Vector2.new(0, 0),
+        Size = Vector2.new(screenW, screenH),
+        Color = colorToDraw(Config.BackgroundColor),
+        ZIndex = 1000,
+    })
 
---==============================================================================
--- Window Component
---==============================================================================
-MayhemUI.Window = {}
-MayhemUI.Window.__index = setmetatable({}, BaseElement)
-
-function MayhemUI.Window.new(title, size, position, draggable, closable)
-    local self = NewElement("Window")
-    setmetatable(self, MayhemUI.Window)
-
-    size = size or UDim2.fromOffset(450, 350)
-    position = position or UDim2.fromScale(0.5, 0.5) -- Centered by default
-    draggable = draggable == nil and true or draggable
-    closable = closable == nil and true or closable
+    elements.Title = DrawingAPI.CreateText({
+        Name = "LoadingTitle",
+        Text = "MAYHEM",
+        Font = "GothamBlack", -- Ensure executor supports/maps this
+        Size = 60,
+        Color = colorToDraw(Config.AccentColor),
+        Position = Vector2.new(screenW / 2, screenH * 0.35),
+        XAlignment = "Center", YAlignment = "Center",
+        ZIndex = 1001,
+    })
     
-    self.Instance = Create("Frame", {
-        Name = "MayhemWindow", Size = size, Position = position, AnchorPoint = Vector2.new(0.5, 0.5),
-        BackgroundColor3 = CurrentTheme.WindowBackground, BorderSizePixel = 1, BorderColor3 = CurrentTheme.Border,
-        Active = true, Draggable = false, Visible = true, ZIndex = SETTINGS.BaseZIndex, ClipsDescendants = true,
+    elements.Status = DrawingAPI.CreateText({
+        Name = "LoadingStatus",
+        Text = "Initializing...",
+        Font = Config.Font,
+        Size = 18,
+        Color = colorToDraw(Config.TextColor),
+        Position = Vector2.new(screenW / 2, screenH * 0.5 + 10),
+        XAlignment = "Center", YAlignment = "Center",
+        ZIndex = 1001,
     })
-    Create("UICorner", { CornerRadius = UDim.new(0, 6), Parent = self.Instance })
 
-    local titleBarHeight = 30
-    self.TitleBar = Create("Frame", { Name = "TitleBar", Parent = self.Instance, Size = UDim2.new(1, 0, 0, titleBarHeight), BackgroundColor3 = CurrentTheme.TitleBarBackground, BorderSizePixel = 0, ZIndex = self.Instance.ZIndex + 1 })
-    local titleCorner = Create("UICorner", {CornerRadius = UDim.new(0,6), Parent = self.TitleBar})
-    -- Quick hack for top-only corners on title bar (could be improved with 9-slice or multiple frames)
-    task.defer(function() if self.TitleBar then Create("Frame", {Name="MaskBottom", Parent=self.TitleBar, BackgroundColor3=self.TitleBar.BackgroundColor3, Size=UDim2.new(1,0,0,6), Position=UDim2.new(0,0,1,-5.9), BorderSizePixel=0, ZIndex = self.TitleBar.ZIndex-1}) end end)
+    local barW, barH = screenW * 0.3, 8
+    local barX, barY = screenW / 2 - barW / 2, screenH * 0.5 + 50
 
-
-    self.TitleLabel = Create("TextLabel", { Name = "TitleLabel", Parent = self.TitleBar, Size = UDim2.new(1, -(closable and titleBarHeight or 0) - 10, 1, 0), Position = UDim2.fromOffset(10, 0), BackgroundTransparency = 1, Font = SETTINGS.Font, Text = title or "Window", TextColor3 = CurrentTheme.PrimaryText, TextSize = 15, TextXAlignment = Enum.TextXAlignment.Left, ZIndex = self.TitleBar.ZIndex + 1 })
-
-    if closable then
-        self.CloseButton = Create("TextButton", { Name = "CloseButton", Parent = self.TitleBar, Size = UDim2.fromOffset(titleBarHeight, titleBarHeight), Position = UDim2.new(1, -titleBarHeight, 0, 0), BackgroundColor3 = self.TitleBar.BackgroundColor3, Font = Enum.Font.SourceSansBold, Text = "✕", TextColor3 = CurrentTheme.SecondaryText, TextSize = 16, AutoButtonColor = false, ZIndex = self.TitleBar.ZIndex + 1 })
-        self:_addConnection(self.CloseButton.MouseEnter:Connect(function() Animate(self.CloseButton, {BackgroundColor3 = Color3.fromRGB(232, 17, 35), TextColor3 = Color3.fromRGB(255,255,255)}, 0.1) end))
-        self:_addConnection(self.CloseButton.MouseLeave:Connect(function() Animate(self.CloseButton, {BackgroundColor3 = self.TitleBar.BackgroundColor3, TextColor3 = CurrentTheme.SecondaryText}, 0.1) end))
-        self:_addConnection(self.CloseButton.MouseButton1Click:Connect(function() self:Destroy() end))
-    end
-
-    self.Content = Create("ScrollingFrame", { -- Using ScrollingFrame for content overflow
-        Name = "Content", Parent = self.Instance, Size = UDim2.new(1, -10, 1, -titleBarHeight - 5), Position = UDim2.new(0, 5, 0, titleBarHeight), BackgroundColor3 = CurrentTheme.ContentBackground, BorderSizePixel = 0, ZIndex = self.Instance.ZIndex, ClipsDescendants = true, ScrollingDirection = Enum.ScrollingDirection.Y, ScrollBarThickness = 6, ScrollBarImageColor3 = CurrentTheme.ScrollBar, CanvasSize = UDim2.new(0,0,0,0) -- Auto canvas size via UIListLayout
+    elements.ProgressBarOutline = DrawingAPI.CreateFrame({
+        Name = "LoadingBarOutline",
+        Position = Vector2.new(barX, barY),
+        Size = Vector2.new(barW, barH),
+        Color = colorToDraw(Config.SecondaryBackgroundColor),
+        CornerRadius = Config.CornerRadius / 2,
+        ZIndex = 1001,
     })
-    self.ContentListLayout = Create("UIListLayout", { Parent = self.Content, SortOrder = Enum.SortOrder.LayoutOrder, Padding = UDim.new(0, 6), FillDirection = Enum.FillDirection.Vertical, HorizontalAlignment = Enum.HorizontalAlignment.Center })
-    Create("UIPadding", { Parent = self.Content, PaddingTop = UDim.new(0,5), PaddingBottom = UDim.new(0,5)})
 
-    if draggable then
-        local dragging, dragInput, dragStart, startPos, dragConn
-        local function updateDrag() if dragging and dragInput and self.Instance and self.Instance.Parent then local d=dragInput.Position-dragStart; self.Instance.Position=UDim2.new(startPos.X.Scale,startPos.X.Offset+d.X,startPos.Y.Scale,startPos.Y.Offset+d.Y) elseif not dragging and dragConn then dragConn:Disconnect(); dragConn=nil end end
-        self:_addConnection(self.TitleBar.InputBegan:Connect(function(i) if i.UserInputType==Enum.UserInputType.MouseButton1 or i.UserInputType==Enum.UserInputType.Touch then if not self.Instance or not self.Instance.Parent then return end; dragging=true;dragStart=i.Position;startPos=self.Instance.Position;i.Changed:Connect(function() if i.UserInputState==Enum.UserInputState.End then dragging=false end end); if not dragConn then dragConn=RunService.RenderStepped:Connect(updateDrag) end end end))
-        self:_addConnection(self.TitleBar.InputChanged:Connect(function(i) if i.UserInputType==Enum.UserInputType.MouseMovement or i.UserInputType==Enum.UserInputType.Touch then dragInput=i end end))
-        self.OnDestroy:Connect(function() if dragConn then dragConn:Disconnect() end end)
+    elements.ProgressBarFill = DrawingAPI.CreateFrame({
+        Name = "LoadingBarFill",
+        Position = Vector2.new(barX, barY), -- Assuming position is top-left for fill
+        Size = Vector2.new(0, barH), -- Initial width 0
+        Color = colorToDraw(Config.AccentColor),
+        CornerRadius = Config.CornerRadius / 2,
+        ZIndex = 1002,
+    })
+
+    coroutine.wrap(function()
+        local function updateProgress(percentage, statusText)
+            if elements.Status then elements.Status.Text = statusText end
+            if elements.ProgressBarFill then elements.ProgressBarFill.Size = Vector2.new(barW * percentage, barH) end
+            -- In a real executor, you'd call a function to redraw or update the drawing object if it doesn't auto-update
+            task.wait(0.1) -- Simulate delay
+        end
+
+        updateProgress(0.1, "Initializing...")
+        task.wait(0.3)
+        updateProgress(0.3, "Loading Assets...")
+        task.wait(0.5)
+        updateProgress(0.6, "Fetching Remote Script...")
+
+        local success, contentOrErr = pcall(function()
+            -- Use HttpService or executor's GetAsync/HttpGet
+            if HttpService then
+                return HttpService:GetAsync(testScriptUrl, true)
+            elseif getg and getg().HttpGet then -- Common pattern for some executors
+                return getg().HttpGet(testScriptUrl)
+            elseif syn and syn.request then -- Synapse X
+                 local response = syn.request({Url = testScriptUrl, Method = "GET"})
+                 if response.StatusCode == 200 then return response.Body else error(response.StatusMessage) end
+            else
+                error("No HTTP request function found.")
+                return ""
+            end
+        end)
+        
+        task.wait(0.5)
+
+        if success then
+            updateProgress(0.8, "Executing Script...")
+            task.wait(0.2)
+            local scriptFunction, scriptError = loadstring(contentOrErr)
+            if scriptFunction then
+                local execSuccess, execError = pcall(scriptFunction)
+                if not execSuccess then
+                    updateProgress(0.9, "Execution Error.")
+                    warn("[MayhemLib] Error executing test script:", execError)
+                    task.wait(1.5)
+                else
+                    updateProgress(1.0, "Loaded Successfully!")
+                end
+            else
+                updateProgress(0.9, "Loadstring Error.")
+                warn("[MayhemLib] Error in loadstring:", scriptError)
+                task.wait(1.5)
+            end
+        else
+            updateProgress(0.9, "Fetch Failed.")
+            warn("[MayhemLib] Failed to fetch test script:", contentOrErr)
+            task.wait(1.5)
+        end
+        
+        task.wait(0.5)
+
+        -- Fade out (conceptual, depends on drawing lib capabilities)
+        for _, el in pairs(elements) do
+            if el.Remove then el:Remove() elseif el.Destroy then el:Destroy() end
+        end
+        elements = {} -- Clear table
+        DrawingAPI.ClearAll() -- Or selectively remove loading screen elements
+
+        if callbackOnFinish then callbackOnFinish() end
+    end)()
+end
+
+-- Store active window elements for interaction and updates
+local activeWindow = {
+    WindowFrame = nil,
+    TitleBar = nil,
+    TitleText = nil,
+    CloseButton = nil,
+    TabButtonsContainerY = 0,
+    ContentContainerPos = Vector2.new(0,0),
+    ContentContainerSize = Vector2.new(0,0),
+    Tabs = {}, -- { ButtonObj, ContentFrameObj, Elements = { {Type, Obj, Props, Callback} } }
+    ActiveTab = nil,
+    DrawnElements = {}, -- All drawing objects associated with this window
+    IsDragging = false,
+    DragStartMouse = Vector2.new(0,0),
+    DragStartPos = Vector2.new(0,0),
+}
+
+local function destroyElement(elementObj)
+    if elementObj and elementObj.Remove then elementObj:Remove()
+    elseif elementObj and elementObj.Destroy then elementObj:Destroy()
     end
-    return self
 end
-function MayhemUI.Window:Add(element)
-    assert(element and element.Instance, "Window:Add expects a valid UI element.")
-    element.Instance.Parent = self.Content
-    element.ParentUI = self; table.insert(self.ChildrenUI, element)
-    if self.ContentListLayout and element.Instance:IsA("GuiObject") then element.Instance.LayoutOrder = #self.ChildrenUI end
-    return self
-end
-function MayhemUI.Window:SetTitle(t) if self.TitleLabel then self.TitleLabel.Text=t end end
-function MayhemUI.Window:Close() self:Destroy() end
 
---==============================================================================
--- Label Component
---==============================================================================
-MayhemUI.Label = {}
-MayhemUI.Label.__index = setmetatable({}, BaseElement)
-function MayhemUI.Label.new(text, fontSize, alignment, size)
-    local self = NewElement("Label")
-    setmetatable(self, MayhemUI.Label)
-    self.Instance = Create("TextLabel", { Name = "MayhemLabel", Size = size or UDim2.new(1, -10, 0, (fontSize or 14) + 8), BackgroundTransparency = 1, Font = SETTINGS.Font, Text = text or "Label", TextColor3 = CurrentTheme.PrimaryText, TextSize = fontSize or 14, TextXAlignment = alignment or Enum.TextXAlignment.Left, TextYAlignment = Enum.TextYAlignment.Center, ZIndex = SETTINGS.BaseZIndex + 1, ClipsDescendants=true, TextWrapped = true })
-    return self
+local function destroyAllWindowElements()
+    for _, elGroup in pairs(activeWindow.DrawnElements) do
+        if type(elGroup) == "table" and elGroup.Type then -- Single drawing obj
+            destroyElement(elGroup)
+        elseif type(elGroup) == "table" then -- Group of drawing objs (like a button with bg and text)
+            for _, subEl in pairs(elGroup) do
+                destroyElement(subEl)
+            end
+        end
+    end
+    activeWindow.DrawnElements = {}
+    activeWindow.Tabs = {}
+    activeWindow.ActiveTab = nil
 end
-function MayhemUI.Label:SetText(t) if self.Instance then self.Instance.Text=t end return self end
-function MayhemUI.Label:SetColor(c) if self.Instance then self.Instance.TextColor3=c end return self end
 
---==============================================================================
--- Button Component
---==============================================================================
-MayhemUI.Button = {}
-MayhemUI.Button.__index = setmetatable({}, BaseElement)
-function MayhemUI.Button.new(text, callback, size)
-    local self = NewElement("Button")
-    setmetatable(self, MayhemUI.Button)
-    self.OnClick = Signal.new(); if callback then self.OnClick:Connect(callback) end
-    self.Instance = Create("TextButton", { Name = "MayhemButton", Size = size or UDim2.new(1, -10, 0, 30), BackgroundColor3 = CurrentTheme.ElementBackground, Font = SETTINGS.Font, Text = text or "Button", TextColor3 = CurrentTheme.PrimaryText, TextSize = 14, AutoButtonColor = false, ZIndex = SETTINGS.BaseZIndex + 1 })
-    Create("UICorner", {CornerRadius = UDim.new(0,4), Parent = self.Instance})
-    Create("UIStroke", {Color = CurrentTheme.Border, Thickness = 1, Parent = self.Instance, ApplyStrokeMode = Enum.ApplyStrokeMode.Border})
-    local nBg,hBg,aBg = CurrentTheme.ElementBackground,CurrentTheme.ElementHover,CurrentTheme.ElementActive
-    self:_addConnection(self.Instance.MouseEnter:Connect(function() if not self.Enabled then return end Animate(self.Instance, {BackgroundColor3=hBg}) end))
-    self:_addConnection(self.Instance.MouseLeave:Connect(function() if not self.Enabled then return end Animate(self.Instance, {BackgroundColor3=nBg}) end))
-    self:_addConnection(self.Instance.MouseButton1Down:Connect(function() if not self.Enabled then return end Animate(self.Instance, {BackgroundColor3=aBg},0.05) end))
-    self:_addConnection(self.Instance.MouseButton1Up:Connect(function() if not self.Enabled then return end Animate(self.Instance, {BackgroundColor3 = self.Instance.MouseEnter and hBg or nBg}) end))
-    self:_addConnection(self.Instance.MouseButton1Click:Connect(function() if not self.Enabled then return end self.OnClick:Fire() end))
-    self.OnDestroy:Connect(function() self.OnClick:Destroy() end)
-    return self
+
+function MayhemLib:CreateWindow(title, width, height)
+    destroyAllWindowElements() -- Clear any existing window
+
+    local startX = (workspace.CurrentCamera.ViewportSize.X - width) / 2
+    local startY = (workspace.CurrentCamera.ViewportSize.Y - height) / 2
+    activeWindow.CurrentPos = Vector2.new(startX, startY)
+    activeWindow.Size = Vector2.new(width, height)
+
+    -- Window Frame
+    activeWindow.WindowFrame = DrawingAPI.CreateFrame({
+        Name = "WindowFrame",
+        Position = activeWindow.CurrentPos,
+        Size = activeWindow.Size,
+        Color = colorToDraw(Config.BackgroundColor),
+        CornerRadius = Config.CornerRadius,
+        ZIndex = 100,
+    })
+    table.insert(activeWindow.DrawnElements, activeWindow.WindowFrame)
+
+    -- Draggable Title Bar
+    activeWindow.TitleBar = DrawingAPI.CreateFrame({
+        Name = "TitleBar",
+        Position = activeWindow.CurrentPos,
+        Size = Vector2.new(width, Config.DraggableAreaHeight),
+        Color = colorToDraw(Config.SecondaryBackgroundColor),
+        CornerRadius = Config.CornerRadius, -- May need specific top-left, top-right radius
+        ZIndex = 101,
+    })
+    -- (You might need to draw title bar with only top corners rounded, depending on executor API)
+    table.insert(activeWindow.DrawnElements, activeWindow.TitleBar)
+
+    activeWindow.TitleText = DrawingAPI.CreateText({
+        Name = "TitleText",
+        Position = activeWindow.CurrentPos + Vector2.new(Config.WindowPadding, Config.DraggableAreaHeight / 2),
+        Text = title or "Mayhem UI",
+        Font = Config.Font,
+        Color = colorToDraw(Config.TextColor),
+        Size = 16, -- Executor specific font sizing
+        XAlignment = "Left", YAlignment = "Center",
+        ZIndex = 102,
+    })
+    table.insert(activeWindow.DrawnElements, activeWindow.TitleText)
+
+    -- Close Button
+    local closeSize = Config.DraggableAreaHeight - 12
+    activeWindow.CloseButton = {
+        Background = DrawingAPI.CreateFrame({
+            Name = "CloseButtonBG",
+            Position = activeWindow.CurrentPos + Vector2.new(width - closeSize - Config.WindowPadding / 2, (Config.DraggableAreaHeight - closeSize) / 2),
+            Size = Vector2.new(closeSize, closeSize),
+            Color = colorToDraw(Config.AccentColor),
+            CornerRadius = Config.CornerRadius / 2,
+            ZIndex = 102
+        }),
+        Text = DrawingAPI.CreateText({
+            Name = "CloseButtonText",
+            Position = activeWindow.CurrentPos + Vector2.new(width - closeSize/2 - Config.WindowPadding/2, Config.DraggableAreaHeight / 2),
+            Text = "X", Font = Config.Font, Color = colorToDraw(Color3.new(1,1,1)), Size = 16,
+            XAlignment = "Center", YAlignment = "Center", ZIndex = 103
+        }),
+        Bounds = Rect.new(
+            activeWindow.CurrentPos.X + width - closeSize - Config.WindowPadding / 2,
+            activeWindow.CurrentPos.Y + (Config.DraggableAreaHeight - closeSize) / 2,
+            closeSize,
+            closeSize
+        )
+    }
+    table.insert(activeWindow.DrawnElements, activeWindow.CloseButton)
+
+    activeWindow.TabButtonsContainerY = activeWindow.CurrentPos.Y + Config.DraggableAreaHeight + Config.ElementPadding
+    
+    local contentY = activeWindow.TabButtonsContainerY + (Config.DraggableAreaHeight - 5) + Config.ElementPadding * 1.5
+    local contentHeight = height - (contentY - activeWindow.CurrentPos.Y) - Config.WindowPadding
+
+    activeWindow.ContentContainerPos = Vector2.new(activeWindow.CurrentPos.X + Config.WindowPadding, contentY)
+    activeWindow.ContentContainerSize = Vector2.new(width - Config.WindowPadding * 2, contentHeight)
+
+    activeWindow.ContentFrame = DrawingAPI.CreateFrame({ -- For clipping/background
+        Name = "ContentFrame",
+        Position = activeWindow.ContentContainerPos,
+        Size = activeWindow.ContentContainerSize,
+        Color = colorToDraw(Config.SecondaryBackgroundColor),
+        CornerRadius = Config.CornerRadius,
+        ZIndex = 101,
+        -- Clipping is a feature of the drawing lib, if available
+    })
+    table.insert(activeWindow.DrawnElements, activeWindow.ContentFrame)
+
+    -- Simplified drag logic
+    local inputBeganConn, inputChangedConn, inputEndedConn
+    inputBeganConn = UserInputService.InputBegan:Connect(function(input)
+        if not activeWindow.WindowFrame or not activeWindow.WindowFrame.Visible then return end
+        if input.UserInputType == Enum.UserInputType.MouseButton1 then
+            local mousePos = UserInputService:GetMouseLocation()
+            local titleBarRect = Rect.new(activeWindow.TitleBar.Position, activeWindow.TitleBar.Position + activeWindow.TitleBar.Size)
+            if mousePos.X >= titleBarRect.Min.X and mousePos.X <= titleBarRect.Max.X and
+               mousePos.Y >= titleBarRect.Min.Y and mousePos.Y <= titleBarRect.Max.Y then
+                activeWindow.IsDragging = true
+                activeWindow.DragStartMouse = mousePos
+                activeWindow.DragStartPos = activeWindow.CurrentPos
+            end
+            -- Close button click
+            if activeWindow.CloseButton and activeWindow.CloseButton.Bounds:Contains(mousePos) then
+                destroyAllWindowElements() -- Effectively closes the window
+                -- MayhemLib:DestroyWindow() or similar cleanup
+                activeWindow.WindowFrame = nil -- Mark as closed
+            end
+        end
+    end)
+    
+    inputChangedConn = UserInputService.InputChanged:Connect(function(input)
+        if activeWindow.IsDragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+            local mousePos = UserInputService:GetMouseLocation()
+            local delta = mousePos - activeWindow.DragStartMouse
+            local newPos = activeWindow.DragStartPos + delta
+            
+            local deltaFromOld = newPos - activeWindow.CurrentPos
+            activeWindow.CurrentPos = newPos
+
+            -- Update positions of ALL drawn elements relative to the window
+            local function updateElementPosition(element, d)
+                if element and element.Position then
+                    element.Position = element.Position + d
+                end
+                if element and element.Bounds and type(element.Bounds.Min) == "Vector2" then -- For click bounds
+                    element.Bounds = Rect.new(element.Bounds.Min + d, element.Bounds.Max + d)
+                end
+            end
+
+            for _, elGroup in ipairs(activeWindow.DrawnElements) do
+                if type(elGroup) == "table" and elGroup.Type then -- Single Drawing Object
+                    updateElementPosition(elGroup, deltaFromOld)
+                elseif type(elGroup) == "table" then -- Group (like button with bg and text)
+                     for _, subEl in pairs(elGroup) do
+                        updateElementPosition(subEl, deltaFromOld)
+                    end
+                end
+            end
+            -- Also update positions of elements within tabs
+            for _, tabData in ipairs(activeWindow.Tabs) do
+                for _, elData in ipairs(tabData.Elements) do
+                     if elData.DrawnObject and elData.DrawnObject.Position then
+                        elData.DrawnObject.Position = elData.DrawnObject.Position + deltaFromOld
+                    elseif type(elData.DrawnObject) == "table" then -- composite element
+                        for _, subEl in pairs(elData.DrawnObject) do
+                            updateElementPosition(subEl, deltaFromOld)
+                        end
+                    end
+                end
+            end
+        end
+    end)
+
+    inputEndedConn = UserInputService.InputEnded:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 then
+            activeWindow.IsDragging = false
+        end
+    end)
+    
+    -- TODO: Store connections to disconnect them if window is destroyed
+    print("[MayhemLib Stub] Window Created. Remember to implement drawing calls.")
+    return MayhemLib -- Return self for chaining or to signify window object
 end
-function MayhemUI.Button:SetText(t) if self.Instance then self.Instance.Text=t end return self end
-function MayhemUI.Button:SetEnabled(e) BaseElement.SetEnabled(self,e); if self.Instance then if not e then Animate(self.Instance, {BackgroundColor3=CurrentTheme.ElementBackground,TextColor3=CurrentTheme.DisabledText}); self.Instance.UIStroke.Enabled=false else Animate(self.Instance, {BackgroundColor3=CurrentTheme.ElementBackground,TextColor3=CurrentTheme.PrimaryText}); self.Instance.UIStroke.Enabled=true end end end
 
---==============================================================================
--- Toggle (Checkbox-like) Component
---==============================================================================
-MayhemUI.Toggle = {}
-MayhemUI.Toggle.__index = setmetatable({}, BaseElement)
-function MayhemUI.Toggle.new(text, initialValue, callback)
-    local self = NewElement("Toggle"); setmetatable(self, MayhemUI.Toggle)
-    self.Value = initialValue or false; self.OnChanged = Signal.new(); if callback then self.OnChanged:Connect(callback) end
-    self.Instance = Create("Frame", { Name="MayhemToggleContainer", Size=UDim2.new(1,-10,0,24), BackgroundTransparency=1 })
-    local bS=18; self.Box = Create("Frame",{Name="ToggleBox",Parent=self.Instance,Size=UDim2.fromOffset(bS,bS),Position=UDim2.new(0,0,0.5,-(bS/2)),BackgroundColor3=CurrentTheme.ElementBackground,BorderColor3=CurrentTheme.Border,BorderSizePixel=1});Create("UICorner",{CornerRadius=UDim.new(0,3),Parent=self.Box})
-    self.Check = Create("Frame",{Name="ToggleCheck",Parent=self.Box,Size=UDim2.new(0.7,0,0.7,0),Position=UDim2.fromScale(0.5,0.5),AnchorPoint=Vector2.new(0.5,0.5),BackgroundColor3=SETTINGS.AccentColor,BorderSizePixel=0,Visible=self.Value});Create("UICorner",{CornerRadius=UDim.new(0,2),Parent=self.Check})
-    self.Label = Create("TextLabel",{Name="ToggleLabel",Parent=self.Instance,Size=UDim2.new(1,-(bS+8),1,0),Position=UDim2.new(0,bS+8,0,0),BackgroundTransparency=1,Font=SETTINGS.Font,Text=text or "Toggle",TextColor3=CurrentTheme.PrimaryText,TextSize=14,TextXAlignment=Enum.TextXAlignment.Left})
-    self.ClickDetector = Create("TextButton",{Name="ToggleClick",Parent=self.Instance,Size=UDim2.new(1,0,1,0),Text="",BackgroundTransparency=1,AutoButtonColor=false})
-    local function updateVis() Animate(self.Check,{Visible=self.Value},0.1); if self.Value then Animate(self.Box,{BackgroundColor3=SETTINGS.AccentColor,BorderColor3=SETTINGS.AccentColor},0.1) else Animate(self.Box,{BackgroundColor3=CurrentTheme.ElementBackground,BorderColor3=CurrentTheme.Border},0.1) end end; updateVis()
-    self:_addConnection(self.ClickDetector.MouseButton1Click:Connect(function() if not self.Enabled then return end self.Value=not self.Value; updateVis(); self.OnChanged:Fire(self.Value) end))
-    self:_addConnection(self.ClickDetector.MouseEnter:Connect(function() if not self.Enabled or self.Value then return end Animate(self.Box,{BorderColor3=SETTINGS.AccentColor}) end))
-    self:_addConnection(self.ClickDetector.MouseLeave:Connect(function() if not self.Enabled or self.Value then return end Animate(self.Box,{BorderColor3=CurrentTheme.Border}) end))
-    self.OnDestroy:Connect(function() self.OnChanged:Destroy() end)
-    return self
+
+local tabButtonWidth = 100
+local tabButtonHeight = Config.DraggableAreaHeight - 10
+
+function MayhemLib:CreateTab(windowRef, title) -- windowRef is MayhemLib itself for now
+    if not activeWindow.WindowFrame then print("Window not created"); return nil end
+
+    local tabIndex = #activeWindow.Tabs + 1
+    local tabX = activeWindow.CurrentPos.X + Config.WindowPadding + (tabIndex - 1) * (tabButtonWidth + Config.ElementPadding / 2)
+    local tabY = activeWindow.TabButtonsContainerY
+
+    local tabData = {
+        Title = title,
+        Elements = {}, -- { Type, DrawnObject(s), Props, Callback, Bounds }
+        DrawnObjects = {}, -- Store the drawing objects for this tab's content
+        IsActive = false,
+        NextElementY = activeWindow.ContentContainerPos.Y + Config.ElementPadding, -- Start Y for elements in this tab
+    }
+
+    tabData.Button = {
+        Background = DrawingAPI.CreateFrame({
+            Name = title .. "TabButtonBG",
+            Position = Vector2.new(tabX, tabY),
+            Size = Vector2.new(tabButtonWidth, tabButtonHeight),
+            Color = colorToDraw(Config.TertiaryBackgroundColor),
+            CornerRadius = Config.CornerRadius / 1.5,
+            ZIndex = 102,
+        }),
+        Text = DrawingAPI.CreateText({
+            Name = title .. "TabButtonText",
+            Position = Vector2.new(tabX + tabButtonWidth/2, tabY + tabButtonHeight/2),
+            Text = title, Font = Config.Font, Color = colorToDraw(Config.TextColor), Size = 14,
+            XAlignment = "Center", YAlignment = "Center", ZIndex = 103,
+        }),
+        Bounds = Rect.new(tabX, tabY, tabButtonWidth, tabButtonHeight)
+    }
+    table.insert(activeWindow.DrawnElements, tabData.Button) -- Add to main draw list
+    
+    local function setActive()
+        if activeWindow.ActiveTab == tabData then return end
+        
+        if activeWindow.ActiveTab then
+            activeWindow.ActiveTab.IsActive = false
+            activeWindow.ActiveTab.Button.Background.Color = colorToDraw(Config.TertiaryBackgroundColor)
+            activeWindow.ActiveTab.Button.Text.Color = colorToDraw(Config.TextColor)
+            for _, elData in ipairs(activeWindow.ActiveTab.Elements) do -- Hide elements of old tab
+                if elData.DrawnObject and elData.DrawnObject.Visible ~= nil then elData.DrawnObject.Visible = false end
+                if type(elData.DrawnObject) == "table" then for _, subEl in pairs(elData.DrawnObject) do if subEl.Visible ~= nil then subEl.Visible = false end end end
+            end
+        end
+
+        tabData.IsActive = true
+        tabData.Button.Background.Color = colorToDraw(Config.AccentColor)
+        tabData.Button.Text.Color = colorToDraw(Color3.fromRGB(255,255,255))
+        for _, elData in ipairs(tabData.Elements) do -- Show elements of new tab
+            if elData.DrawnObject and elData.DrawnObject.Visible ~= nil then elData.DrawnObject.Visible = true end
+            if type(elData.DrawnObject) == "table" then for _, subEl in pairs(elData.DrawnObject) do if subEl.Visible ~= nil then subEl.Visible = true end end end
+        end
+        activeWindow.ActiveTab = tabData
+    end
+    
+    -- Connect click for tab button (needs to be in InputBegan or a RenderStepped check)
+    -- For simplicity, this logic needs to be integrated into the main InputBegan handler
+    -- or a dedicated click manager loop.
+    -- Let's assume a simplified global click handler for now:
+    MayhemLib._AddClickable(tabData.Button.Bounds, setActive)
+
+    table.insert(activeWindow.Tabs, tabData)
+    if not activeWindow.ActiveTab then setActive() end -- Activate first tab
+
+    return tabData -- Return the tab object so elements can be added to it
 end
-function MayhemUI.Toggle:SetValue(v, fireEvent) fireEvent = fireEvent == nil and true or fireEvent; if self.Value~=v then self.Value=v; local function uV() Animate(self.Check,{Visible=self.Value},0.1); if self.Value then Animate(self.Box,{BackgroundColor3=SETTINGS.AccentColor,BorderColor3=SETTINGS.AccentColor},0.1) else Animate(self.Box,{BackgroundColor3=CurrentTheme.ElementBackground,BorderColor3=CurrentTheme.Border},0.1) end end; uV(); if fireEvent then self.OnChanged:Fire(self.Value) end end return self end
-function MayhemUI.Toggle:GetValue() return self.Value end
 
---==============================================================================
--- InputField Component
---==============================================================================
-MayhemUI.InputField = {}
-MayhemUI.InputField.__index = setmetatable({}, BaseElement)
-function MayhemUI.InputField.new(placeholderText, isPassword, callback)
-    local self = NewElement("InputField"); setmetatable(self, MayhemUI.InputField)
-    self.OnChanged=Signal.new(); self.OnFocusLost=Signal.new(); self.OnEnterPressed=Signal.new(); if callback then self.OnChanged:Connect(callback) end
-    self.Instance = Create("Frame",{Name="MayhemInputContainer",Size=UDim2.new(1,-10,0,32),BackgroundColor3=CurrentTheme.ElementBackground,BorderColor3=CurrentTheme.Border,BorderSizePixel=1});Create("UICorner",{CornerRadius=UDim.new(0,4),Parent=self.Instance})
-    self.TextBox = Create("TextBox",{Name="MayhemTextBox",Parent=self.Instance,Size=UDim2.new(1,-16,1,-8),Position=UDim2.fromOffset(8,4),BackgroundTransparency=1,Font=SETTINGS.Font,Text="",PlaceholderText=placeholderText or "Enter text...",PlaceholderColor3=CurrentTheme.SecondaryText,TextColor3=CurrentTheme.PrimaryText,TextSize=14,ClearTextOnFocus=false,TextXAlignment=Enum.TextXAlignment.Left,ZIndex=self.Instance.ZIndex+1}); if isPassword then self.TextBox.TextMasked=true end
-    local focBrd,normBrd = SETTINGS.AccentColor,CurrentTheme.Border
-    self:_addConnection(self.TextBox.FocusGained:Connect(function() Animate(self.Instance,{BorderColor3=focBrd}) end))
-    self:_addConnection(self.TextBox.FocusLost:Connect(function(eP) Animate(self.Instance,{BorderColor3=normBrd});self.OnFocusLost:Fire(self.TextBox.Text,eP);self.OnChanged:Fire(self.TextBox.Text);if eP then self.OnEnterPressed:Fire(self.TextBox.Text) end end))
-    self.OnDestroy:Connect(function() self.OnChanged:Destroy();self.OnFocusLost:Destroy();self.OnEnterPressed:Destroy() end)
-    return self
+-- Internal: manage clickables. In real executor UI, this is handled by its event system.
+MayhemLib._Clickables = {}
+MayhemLib._AddClickable = function(bounds, callback)
+    table.insert(MayhemLib._Clickables, {Bounds = bounds, Callback = callback})
 end
-function MayhemUI.InputField:SetText(t) if self.TextBox then self.TextBox.Text=tostring(t) end return self end
-function MayhemUI.InputField:GetText() return self.TextBox and self.TextBox.Text or "" end
-function MayhemUI.InputField:Clear() self:SetText("") return self end
-function MayhemUI.InputField:SetPlaceholder(p) if self.TextBox then self.TextBox.PlaceholderText=p end return self end
+-- This would be checked in UserInputService.InputBegan
+-- (This is a very simplified click handling for example purposes)
+if not MayhemLib._ClickListenerAttached then
+    UserInputService.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 then
+            if not activeWindow.WindowFrame or (activeWindow.WindowFrame.Visible == false) then return end
+            local mousePos = UserInputService:GetMouseLocation()
+            for _, clickable in ipairs(MayhemLib._Clickables) do
+                -- Check if clickable is part of active tab or always visible (like tab buttons)
+                local isRelevant = false
+                if activeWindow.ActiveTab then
+                    for _, elData in ipairs(activeWindow.ActiveTab.Elements) do
+                        if elData.Bounds == clickable.Bounds and elData.DrawnObject and (elData.DrawnObject.Visible == nil or elData.DrawnObject.Visible) then
+                           isRelevant = true; break
+                        end
+                    end
+                end
+                -- Check tab buttons
+                for _, tabItem in ipairs(activeWindow.Tabs) do
+                    if tabItem.Button and tabItem.Button.Bounds == clickable.Bounds then
+                        isRelevant = true; break
+                    end
+                end
 
---==============================================================================
--- Slider Component
---==============================================================================
-MayhemUI.Slider = {}
-MayhemUI.Slider.__index = setmetatable({}, BaseElement)
-function MayhemUI.Slider.new(min, max, initialValue, step, callback)
-    local self = NewElement("Slider"); setmetatable(self, MayhemUI.Slider); self.Min=min or 0; self.Max=max or 100; self.Value=initialValue or self.Min; self.Step=step or 1; self.OnChanged=Signal.new(); if callback then self.OnChanged:Connect(callback) end
-    local tH,thS=6,16; self.Instance=Create("Frame",{Name="MayhemSliderContainer",Size=UDim2.new(1,-10,0,thS+4),BackgroundTransparency=1})
-    self.Track=Create("Frame",{Name="SliderTrack",Parent=self.Instance,Size=UDim2.new(1,-thS,0,tH),Position=UDim2.new(0,thS/2,0.5,-tH/2),BackgroundColor3=CurrentTheme.ElementBackground,BorderColor3=CurrentTheme.Border,BorderSizePixel=1});Create("UICorner",{CornerRadius=UDim.new(0,tH/2),Parent=self.Track})
-    self.Fill=Create("Frame",{Name="SliderFill",Parent=self.Track,Size=UDim2.new(0,0,1,0),BackgroundColor3=SETTINGS.AccentColor,BorderSizePixel=0});Create("UICorner",{CornerRadius=UDim.new(0,tH/2),Parent=self.Fill})
-    self.Thumb=Create("Frame",{Name="SliderThumb",Parent=self.Instance,Size=UDim2.fromOffset(thS,thS),Position=UDim2.new(0,0,0.5,-thS/2),AnchorPoint=Vector2.new(0.5,0.5),BackgroundColor3=CurrentTheme.ElementHover,BorderColor3=SETTINGS.AccentColor,BorderSizePixel=2,ZIndex=self.Instance.ZIndex+1});Create("UICorner",{CornerRadius=UDim.new(1,0),Parent=self.Thumb})
-    self.ValueLabel=Create("TextLabel",{Name="SliderValueLabel",Parent=self.Thumb,Size=UDim2.new(1,0,1,0),Visible=false,BackgroundTransparency=1,Font=SETTINGS.Font,TextColor3=CurrentTheme.PrimaryText,TextSize=10,TextStrokeTransparency=0.7, TextStrokeColor3=Color3.new(0,0,0)})
-    local function updateVis(fireEvent, noAnim) local p=math.clamp((self.Value-self.Min)/(self.Max-self.Min),0,1); local tPW=self.Track.AbsoluteSize.X; local tAP=self.Track.AbsolutePosition.X; local thAP=self.Thumb.AbsolutePosition.X
-        if noAnim then self.Fill.Size=UDim2.new(p,0,1,0); self.Thumb.Position=UDim2.new(0,(thS/2)+(p*tPW),0.5,0) else Animate(self.Fill,{Size=UDim2.new(p,0,1,0)}); Animate(self.Thumb,{Position=UDim2.new(0,(thS/2)+(p*tPW),0.5,0)}) end
-        self.ValueLabel.Text=string.format("%.2f",self.Value):gsub("%.?0+$",""); if fireEvent then self.OnChanged:Fire(self.Value) end
-    end; self:SetValue(self.Value,false,true)
-    local dragging,dragConn; local function handleDrag(iP) if not self.Instance or not self.Track then return end; local rX=iP.X-self.Track.AbsolutePosition.X; local tPW=self.Track.AbsoluteSize.X; local p=math.clamp(rX/tPW,0,1); local nV=self.Min+p*(self.Max-self.Min); if self.Step>0 then nV=math.floor(nV/self.Step+0.5)*self.Step end; nV=math.clamp(nV,self.Min,self.Max); if self.Value~=nV then self.Value=nV; updateVis(true) end end
-    local function startDrag() dragging=true; Animate(self.Thumb,{Size=UDim2.fromOffset(thS*1.2,thS*1.2)},0.1); if not dragConn then dragConn=RunService.RenderStepped:Connect(function() if dragging then handleDrag(UserInputService:GetMouseLocation()) end end) end end
-    local function endDrag() dragging=false; Animate(self.Thumb,{Size=UDim2.fromOffset(thS,thS)},0.1); if dragConn then dragConn:Disconnect(); dragConn=nil end end
-    self:_addConnection(self.Track.InputBegan:Connect(function(i) if i.UserInputType==Enum.UserInputType.MouseButton1 then handleDrag(i.Position); startDrag() end end))
-    self:_addConnection(self.Thumb.InputBegan:Connect(function(i) if i.UserInputType==Enum.UserInputType.MouseButton1 then startDrag() end end))
-    self:_addConnection(UserInputService.InputEnded:Connect(function(i) if i.UserInputType==Enum.UserInputType.MouseButton1 and dragging then endDrag() end end))
-    self.OnDestroy:Connect(function() self.OnChanged:Destroy(); if dragConn then dragConn:Disconnect() end end)
-    return self
+
+                if isRelevant and clickable.Bounds:Contains(mousePos) then
+                    clickable.Callback()
+                    break -- Process one click
+                end
+            end
+        end
+    end)
+    MayhemLib._ClickListenerAttached = true
 end
-function MayhemUI.Slider:SetValue(nV,fE,noA) fE=fE==nil and true or fE; nV=math.clamp(nV,self.Min,self.Max); if self.Step>0 then nV=math.floor(nV/self.Step+0.5)*self.Step end; if self.Value~=nV or noA then self.Value=nV; local p=math.clamp((self.Value-self.Min)/(self.Max-self.Min),0,1); local tPW=self.Track and self.Track.AbsoluteSize.X or 200; local thS=self.Thumb and self.Thumb.AbsoluteSize.X or 16
-    if noA then if self.Fill then self.Fill.Size=UDim2.new(p,0,1,0) end; if self.Thumb then self.Thumb.Position=UDim2.new(0,(thS/2)+(p*tPW),0.5,0) end else if self.Fill then Animate(self.Fill,{Size=UDim2.new(p,0,1,0)}) end; if self.Thumb then Animate(self.Thumb,{Position=UDim2.new(0,(thS/2)+(p*tPW),0.5,0)}) end end
-    if self.ValueLabel then self.ValueLabel.Text=string.format("%.2f",self.Value):gsub("%.?0+$","") end; if fE then self.OnChanged:Fire(self.Value) end end return self end
-function MayhemUI.Slider:GetValue() return self.Value end
-function MayhemUI.Slider:ShowValueLabel(v) self.ValueLabel.Visible=v return self end
 
---==============================================================================
--- Dropdown Component
---==============================================================================
-MayhemUI.Dropdown = {}
-MayhemUI.Dropdown.__index = setmetatable({}, BaseElement)
-function MayhemUI.Dropdown.new(options, initialSelectionIndex, callback)
-    local self = NewElement("Dropdown"); setmetatable(self, MayhemUI.Dropdown)
-    self.Options=options or {"Opt1"}; self.SelectedOption=nil; self.SelectedIndex=-1; self.IsOpen=false; self.OnChanged=Signal.new(); if callback then self.OnChanged:Connect(callback) end
-    self.Instance=Create("Frame",{Name="MayhemDropdown",Size=UDim2.new(1,-10,0,30),BackgroundColor3=CurrentTheme.ElementBackground,BorderColor3=CurrentTheme.Border,BorderSizePixel=1,ClipsDescendants=false});Create("UICorner",{CornerRadius=UDim.new(0,4),Parent=self.Instance})
-    self.CurrentValueLabel=Create("TextLabel",{Parent=self.Instance,Name="DropdownVal",Size=UDim2.new(1,-25,1,0),Position=UDim2.fromOffset(8,0),BackgroundTransparency=1,Font=SETTINGS.Font,TextColor3=CurrentTheme.PrimaryText,TextSize=14,TextXAlignment=Enum.TextXAlignment.Left})
-    self.Arrow=Create("TextLabel",{Parent=self.Instance,Name="DropdownArrow",Size=UDim2.fromOffset(20,20),Position=UDim2.new(1,-22,0.5,-10),BackgroundTransparency=1,Font=Enum.Font.SourceSansBold,Text="▼",TextColor3=CurrentTheme.SecondaryText,TextSize=16})
-    self.OptionsListFrame=Create("ScrollingFrame",{Name="DropdownOpts",Parent=self.Instance,Visible=false,Size=UDim2.new(1,0,0,0),Position=UDim2.new(0,0,1,2),BackgroundColor3=CurrentTheme.ElementBackground,BorderColor3=CurrentTheme.Border,BorderSizePixel=1,ZIndex=self.Instance.ZIndex+10,ScrollBarThickness=6,ScrollBarImageColor3=CurrentTheme.ScrollBar});Create("UICorner",{CornerRadius=UDim.new(0,4),Parent=self.OptionsListFrame});local lL=Create("UIListLayout",{Parent=self.OptionsListFrame,SortOrder=Enum.SortOrder.LayoutOrder,Padding=UDim.new(0,2)})
-    local function selectOpt(idx,txt,fire) self.SelectedOption=txt;self.SelectedIndex=idx;self.CurrentValueLabel.Text=txt;if fire==nil or fire then self.OnChanged:Fire(txt,idx) end end
-    local function toggleOpen(forceState) self.IsOpen = forceState ~= nil and forceState or not self.IsOpen; Animate(self.Arrow,{Rotation=self.IsOpen and 180 or 0},0.1); self.OptionsListFrame.Visible=self.IsOpen; if self.IsOpen then local mH=150; local rH=#self.Options*24+lL.Padding.Offset*(#self.Options+1); local lH=math.min(mH,rH); self.OptionsListFrame.Size=UDim2.new(1,0,0,lH); local sG=self.Instance:FindFirstAncestorOfClass("ScreenGui") or game:GetService("CoreGui"); self.OptionsListFrame.Parent=sG; local aP=self.Instance.AbsolutePosition; local aSY=self.Instance.AbsoluteSize.Y; self.OptionsListFrame.Position=UDim2.fromOffset(aP.X,aP.Y+aSY+2); self.OptionsListFrame.Size=UDim2.new(0,self.Instance.AbsoluteSize.X,0,lH); self.OptionsListFrame.ZIndex=SETTINGS.BaseZIndex+1000 else self.OptionsListFrame.Parent=self.Instance; self.OptionsListFrame.Position=UDim2.new(0,0,1,2) end end
-    self:_addConnection(self.Instance.InputBegan:Connect(function(i) if i.UserInputType==Enum.UserInputType.MouseButton1 then toggleOpen() end end))
-    local function populate() for _,c in ipairs(self.OptionsListFrame:GetChildren()) do if c:IsA("TextButton") then c:Destroy() end end; for i,oT in ipairs(self.Options) do local oB=Create("TextButton",{Name="Opt"..i,Parent=self.OptionsListFrame,Size=UDim2.new(1,0,0,22),BackgroundColor3=CurrentTheme.ElementBackground,Font=SETTINGS.Font,Text=oT,TextColor3=CurrentTheme.PrimaryText,TextSize=13,AutoButtonColor=false,LayoutOrder=i});Create("UICorner",{CornerRadius=UDim.new(0,3),Parent=oB}); self:_addConnection(oB.MouseEnter:Connect(function() Animate(oB,{BackgroundColor3=CurrentTheme.ElementHover}) end)); self:_addConnection(oB.MouseLeave:Connect(function() Animate(oB,{BackgroundColor3=CurrentTheme.ElementBackground}) end)); self:_addConnection(oB.MouseButton1Click:Connect(function() selectOpt(i,oT,true); toggleOpen(false) end)) end end; populate()
-    if #self.Options>0 then selectOpt(initialSelectionIndex or 1,self.Options[initialSelectionIndex or 1],false) else self.CurrentValueLabel.Text="No options" end
-    local clickOutsideConn; self.OnDestroy:Connect(function() self.OnChanged:Destroy(); if self.OptionsListFrame.Parent~=self.Instance then self.OptionsListFrame:Destroy() end; if clickOutsideConn then clickOutsideConn:Disconnect() end end)
-    clickOutsideConn = UserInputService.InputBegan:Connect(function(input) if self.IsOpen and (input.UserInputType==Enum.UserInputType.MouseButton1 or input.UserInputType==Enum.UserInputType.Touch) then local obj=input.GuiObjectAtPosition; if not (obj and (obj==self.Instance or obj:IsDescendantOf(self.Instance) or obj==self.OptionsListFrame or obj:IsDescendantOf(self.OptionsListFrame))) then toggleOpen(false) end end end)
-    self:_addConnection(clickOutsideConn) -- Ensure this connection is managed
-    return self
+
+local function addElementToTab(tabData, elementInfo, height)
+    if not tabData then print("Invalid tab."); return nil end
+
+    local elX = activeWindow.ContentContainerPos.X + Config.ElementPadding
+    local elY = tabData.NextElementY
+    local elWidth = activeWindow.ContentContainerSize.X - Config.ElementPadding * 2
+    
+    -- Update position for drawing objects
+    if elementInfo.DrawnObject and elementInfo.DrawnObject.Position then
+        elementInfo.DrawnObject.Position = Vector2.new(elX, elY)
+        elementInfo.DrawnObject.Size = Vector2.new(elWidth, height)
+         if elementInfo.DrawnObject.Visible ~= nil then elementInfo.DrawnObject.Visible = tabData.IsActive end
+    elseif type(elementInfo.DrawnObject) == "table" then -- For composite elements
+        for _, subEl in pairs(elementInfo.DrawnObject) do
+            -- Adjust sub-element positions relative to elX, elY
+            -- This needs careful handling based on how composite elements are defined
+             if subEl.Visible ~= nil then subEl.Visible = tabData.IsActive end
+        end
+    end
+    
+    elementInfo.Bounds = Rect.new(elX, elY, elWidth, height)
+    table.insert(tabData.Elements, elementInfo)
+    table.insert(activeWindow.DrawnElements, elementInfo.DrawnObject) -- Also add to main draw list for positioning on drag
+
+    tabData.NextElementY = elY + height + Config.ElementPadding
+    return elementInfo -- Or the main drawn object
 end
-function MayhemUI.Dropdown:SetOptions(newOpts, initialIdx) self.Options=newOpts; local function pop() for _,c in ipairs(self.OptionsListFrame:GetChildren()) do if c:IsA("TextButton") then c:Destroy() end end; for i,oT in ipairs(self.Options) do local oB=Create("TextButton",{Name="Opt"..i,Parent=self.OptionsListFrame,Size=UDim2.new(1,0,0,22),BackgroundColor3=CurrentTheme.ElementBackground,Font=SETTINGS.Font,Text=oT,TextColor3=CurrentTheme.PrimaryText,TextSize=13,AutoButtonColor=false,LayoutOrder=i});Create("UICorner",{CornerRadius=UDim.new(0,3),Parent=oB}); self:_addConnection(oB.MouseEnter:Connect(function() Animate(oB,{BackgroundColor3=CurrentTheme.ElementHover}) end)); self:_addConnection(oB.MouseLeave:Connect(function() Animate(oB,{BackgroundColor3=CurrentTheme.ElementBackground}) end)); self:_addConnection(oB.MouseButton1Click:Connect(function() self.SelectedOption=oT;self.SelectedIndex=i;self.CurrentValueLabel.Text=oT;self.OnChanged:Fire(oT,i); self.IsOpen=false;Animate(self.Arrow,{Rotation=0},0.1);self.OptionsListFrame.Visible=false;self.OptionsListFrame.Parent=self.Instance;self.OptionsListFrame.Position=UDim2.new(0,0,1,2) end)) end end; pop(); if #self.Options>0 then self:Select(initialIdx or 1,false) else self.CurrentValueLabel.Text="No options";self.SelectedOption=nil;self.SelectedIndex=-1 end return self end
-function MayhemUI.Dropdown:Select(optId,fire) local fI=-1;local fO=nil;if type(optId)=="number" then if optId>=1 and optId<=#self.Options then fI=optId;fO=self.Options[optId] end elseif type(optId)=="string" then for i,o in ipairs(self.Options) do if o==optId then fI=i;fO=o;break end end end; if fI~=-1 then self.SelectedOption=fO;self.SelectedIndex=fI;self.CurrentValueLabel.Text=fO;if fire==nil or fire then self.OnChanged:Fire(fO,fI) end end return self end
-function MayhemUI.Dropdown:GetSelected() return self.SelectedOption,self.SelectedIndex end
 
---==============================================================================
--- Main Library API & Config
---==============================================================================
-function MayhemUI:CreateScreen(name)
-    name = name or "MayhemScreen_"..math.random(1000,9999)
-    local screenGui = Create("ScreenGui", { Name = name, Parent = game:GetService("CoreGui"), ZIndexBehavior = Enum.ZIndexBehavior.Global, DisplayOrder = SETTINGS.BaseZIndex, ResetOnSpawn = false })
-    return screenGui
+
+function MayhemLib:CreateLabel(tabData, text)
+    local h = 20
+    local drawnText = DrawingAPI.CreateText({
+        Name = "Label_" .. text:sub(1,10),
+        Text = text, Font = Config.Font, Color = colorToDraw(Config.TextColor), Size = 14,
+        XAlignment = "Left", YAlignment = "Top", ZIndex = 110,
+        -- Position and Size will be set by addElementToTab
+    })
+    return addElementToTab(tabData, {Type = "Label", DrawnObject = drawnText, Text = text}, h)
 end
-function MayhemUI:SetTheme(themeName) if THEMES[themeName] then SETTINGS.Theme=themeName; CurrentTheme=THEMES[themeName]; warn("MayhemUI: Theme changed. Full refresh of existing UI elements for theme updates is not implemented in this version.") else warn("MayhemUI: Theme '"..tostring(themeName).."' not found.") end end
-function MayhemUI:SetAccentColor(c) assert(typeof(c)=="Color3","Accent must be Color3"); SETTINGS.AccentColor=c; warn("MayhemUI: Accent changed. Full refresh not implemented.") end
-function MayhemUI:SetFont(f) assert(typeof(f)=="EnumItem" and f.EnumType==Enum.Font,"Font must be Enum.Font"); SETTINGS.Font=f; warn("MayhemUI: Font changed. Full refresh not implemented.") end
 
-return MayhemUI
+function MayhemLib:CreateButton(tabData, text, callback)
+    local h = 30
+    local elX = activeWindow.ContentContainerPos.X + Config.ElementPadding -- Placeholder, set in addElement
+    local elY = tabData.NextElementY -- Placeholder
+    local elWidth = activeWindow.ContentContainerSize.X - Config.ElementPadding * 2 -- Placeholder
+
+    local buttonElement = {
+        DrawnObject = {
+            Background = DrawingAPI.CreateFrame({
+                Name = "ButtonBG_"..text:sub(1,5),
+                Color = colorToDraw(Config.AccentColor), CornerRadius = Config.CornerRadius, ZIndex = 110,
+            }),
+            Text = DrawingAPI.CreateText({
+                Name = "ButtonText_"..text:sub(1,5), Text = text, Font = Config.Font,
+                Color = colorToDraw(Color3.fromRGB(255,255,255)), Size = 14,
+                XAlignment = "Center", YAlignment = "Center", ZIndex = 111,
+            })
+        },
+        Callback = callback,
+        Type = "Button"
+    }
+    
+    local addedEl = addElementToTab(tabData, buttonElement, h)
+    
+    -- Update actual positions for the sub-drawing objects based on final placement
+    if addedEl and addedEl.Bounds then
+        addedEl.DrawnObject.Background.Position = addedEl.Bounds.Min
+        addedEl.DrawnObject.Background.Size = addedEl.Bounds.Max - addedEl.Bounds.Min
+        addedEl.DrawnObject.Text.Position = addedEl.Bounds.Min + (addedEl.Bounds.Max - addedEl.Bounds.Min) / 2
+        if callback then MayhemLib._AddClickable(addedEl.Bounds, callback) end
+    end
+    return addedEl
+end
+
+-- Add CreateToggle, CreateTextbox, CreateSlider, CreateMultiLineEdit similarly...
+-- These will be more complex as they involve more drawing parts and interaction logic.
+-- For example, a Toggle needs a box and a checkmark, and click logic to change state and color.
+-- A Textbox needs a background, text display, cursor, and input capture (VERY executor-specific).
+
+print("[MayhemLib Executor Template] Loaded. Replace DrawingAPI calls with your executor's specifics.")
+
+return MayhemLib
