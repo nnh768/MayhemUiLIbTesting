@@ -145,9 +145,11 @@ function MayhemLib:ShowLoadingScreen(optionalScriptToLoadUrl, callbackOnFinish)
                 if syn and syn.request then
                      local response = syn.request({Url = optionalScriptToLoadUrl, Method = "GET"})
                      if response.StatusCode == 200 then return response.Body else error(response.StatusMessage .. " (Code: " .. response.StatusCode .. ")") end
-                elseif HttpService then
+                elseif HttpService then -- Less likely to work directly in executors but good fallback logic
                     return HttpService:GetAsync(optionalScriptToLoadUrl, true)
-                elseif getgenv().HttpGet then
+                elseif typeof and typeof(HttpGet) == "function" then -- Check for global HttpGet
+                    return HttpGet(optionalScriptToLoadUrl)
+                elseif getgenv and getgenv().HttpGet then -- Check for getgenv().HttpGet
                     return getgenv().HttpGet(optionalScriptToLoadUrl)
                 else
                     error("No suitable HTTP request function found in environment.")
@@ -193,7 +195,7 @@ function MayhemLib:ShowLoadingScreen(optionalScriptToLoadUrl, callbackOnFinish)
 
         if callbackOnFinish then pcall(callbackOnFinish) end
     end)()
-end
+end -- This 'end' closes MayhemLib:ShowLoadingScreen
 
 
 local activeWindow = {
@@ -225,11 +227,13 @@ local function destroyCurrentWindowGFX()
     activeWindow.WindowFrame = nil; activeWindow.TitleBar = nil; activeWindow.TitleText = nil;
     activeWindow.CloseButton = {}; activeWindow.Tabs = {}; activeWindow.ActiveTab = nil;
     activeWindow.ContentFrame = nil;
-    MayhemLib._Clickables = {} 
+    if MayhemLib._Clickables then -- Check if _Clickables exists before clearing
+        MayhemLib._Clickables = {} 
+    end
 end
 
 
-function MayhemLib:CreateWindow(title, width, height)
+function MayhemLib:CreateWindow(title, width, height) -- Line ~230
     destroyCurrentWindowGFX() 
     DrawingAPI.NEXT_ZINDEX = 100 
 
@@ -285,14 +289,13 @@ function MayhemLib:CreateWindow(title, width, height)
     
     if not MayhemLib._WindowInputConnected then
         UserInputService.InputBegan:Connect(function(input)
-            if not activeWindow.WindowFrame or activeWindow.WindowFrame.Visible == false then return end -- Check if window is active
+            if not activeWindow.WindowFrame or activeWindow.WindowFrame.Visible == false then return end
             if input.UserInputType == Enum.UserInputType.MouseButton1 then
                 local mousePos = UserInputService:GetMouseLocation()
                 
-                -- Check title bar AFTER close button, so close button takes precedence
                 if activeWindow.CloseButton.Bounds and activeWindow.CloseButton.Bounds:Contains(mousePos) then
                     destroyCurrentWindowGFX()
-                    return -- Stop further processing for this click
+                    return 
                 end
 
                 local titleBarRect = Rect.new(activeWindow.TitleBar.Position, activeWindow.TitleBar.Position + activeWindow.TitleBar.Size)
@@ -300,20 +303,19 @@ function MayhemLib:CreateWindow(title, width, height)
                     activeWindow.IsDragging = true
                     activeWindow.DragStartMouse = mousePos
                     activeWindow.DragStartPos = activeWindow.CurrentPos
-                    -- Do not return here, allow clickables to be checked if not dragging
-                end
+                end -- Removed 'return' here to allow clickables check even if drag starts
                 
-                -- Handle general clickable elements only if not currently dragging
                 if not activeWindow.IsDragging and MayhemLib._Clickables then
-                    for _, clickable in ipairs(MayhemLib._Clickables) do
+                    for i = #MayhemLib._Clickables, 1, -1 do -- Iterate backwards for safe removal if needed, though not done here
+                        local clickable = MayhemLib._Clickables[i]
                         if clickable.IsActive() and clickable.Bounds:Contains(mousePos) then
                             pcall(clickable.Callback)
-                            -- break -- Process one click per input event (optional, can be problematic with overlapping elements)
+                            -- break -- Consider if only one clickable should fire
                         end
                     end
                 end
             end
-        end)
+        end) -- This 'end' closes the InputBegan anonymous function
         
         UserInputService.InputChanged:Connect(function(input)
             if activeWindow.IsDragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
@@ -345,22 +347,22 @@ function MayhemLib:CreateWindow(title, width, height)
                     updateElementPositionRecursive(elRef, actualDelta)
                 end
             end
-        end)
+        end) -- This 'end' closes the InputChanged anonymous function
 
         UserInputService.InputEnded:Connect(function(input)
             if input.UserInputType == Enum.UserInputType.MouseButton1 then
-                -- If it was a drag, just end drag.
-                -- If it was a click (IsDragging is false), clickables were handled in InputBegan.
                 activeWindow.IsDragging = false
             end
-        end)
+        end) -- This 'end' closes the InputEnded anonymous function
         MayhemLib._WindowInputConnected = true
-    end
+    end -- This 'end' closes 'if not MayhemLib._WindowInputConnected then'
     
     return MayhemLib
-end
+end -- <<<< THIS IS THE CRITICAL 'end' that closes MayhemLib:CreateWindow (around line 230)
 
-MayhemLib._Clickables = {} 
+if not MayhemLib._Clickables then -- Ensure _Clickables is initialized if not already (e.g. if CreateWindow wasn't called first)
+    MayhemLib._Clickables = {} 
+end
 local tabButtonWidth = 100
 local tabButtonHeight = Config.DraggableAreaHeight - 10
 
@@ -416,15 +418,15 @@ function MayhemLib:CreateTab(windowRefIgnored, title)
             end
         end
         activeWindow.ActiveTab = tabData
-    end
+    end -- This 'end' closes 'setActive' function
     
-    table.insert(MayhemLib._Clickables, {Bounds = tabData.Button.Bounds, Callback = setActive, IsActive = function() return activeWindow.WindowFrame ~= nil and activeWindow.WindowFrame.Visible ~= false end}) -- Tab buttons active if window is visible
+    table.insert(MayhemLib._Clickables, {Bounds = tabData.Button.Bounds, Callback = setActive, IsActive = function() return activeWindow.WindowFrame ~= nil and activeWindow.WindowFrame.Visible ~= false end})
 
     table.insert(activeWindow.Tabs, tabData)
     if not activeWindow.ActiveTab then setActive() end
 
     return tabData
-end
+end -- This 'end' closes MayhemLib:CreateTab
 
 local function addElementToTab(tabData, elementMeta, height)
     if not tabData then print("Invalid tab for AddElement."); return nil end
@@ -437,21 +439,18 @@ local function addElementToTab(tabData, elementMeta, height)
 
     local function setupDrawnObject(dObj, isComposite)
         if not dObj then return end
-        if isComposite then -- dObj is a table of drawing objects (e.g., button's bg and text)
+        if isComposite then 
             for _, subEl in pairs(dObj) do
                  if subEl and subEl.Visible ~= nil then subEl.Visible = tabData.IsActive end
-                 -- Relative positioning of sub-elements is assumed to be handled by Create<Element>
-                 -- Here, we ensure they are added to the main draw list for dragging and cleanup
-                 table.insert(activeWindow.DrawnElementsInWindow, subEl) 
+                 if subEl then table.insert(activeWindow.DrawnElementsInWindow, subEl) end
             end
-        else -- dObj is a single drawing object
+        else 
             if dObj.Position then dObj.Position = Vector2.new(elX, elY) end
-            -- Text size is handled by Drawing.new("Text").Size, not frame size
             if dObj.Size and (not dObj.Text) then dObj.Size = Vector2.new(elWidth, height) end 
             if dObj.Visible ~= nil then dObj.Visible = tabData.IsActive end
             table.insert(activeWindow.DrawnElementsInWindow, dObj) 
         end
-    end
+    end -- This 'end' closes 'setupDrawnObject' function
 
     setupDrawnObject(elementMeta.DrawnObject, type(elementMeta.DrawnObject) == "table" and not elementMeta.DrawnObject.Remove)
     
@@ -462,15 +461,18 @@ local function addElementToTab(tabData, elementMeta, height)
         table.insert(MayhemLib._Clickables, {
             Bounds = elementMeta.Bounds,
             Callback = elementMeta.Callback,
-            IsActive = function() 
+            IsActive = function() -- Line ~485
                 return activeWindow.WindowFrame ~= nil and activeWindow.WindowFrame.Visible ~= false and 
                        tabData.IsActive and 
-                       (elementMeta.DrawnObject and ((type(elementMeta.DrawnObject) == "table" and elementMeta.DrawnObject.Background and elementMeta.DrawnObject.Background.Visible ~= false) or (elementMeta.DrawnObject.Visible ~= false)) or true) 
-            end
+                       (elementMeta.DrawnObject and 
+                           ((type(elementMeta.DrawnObject) == "table" and elementMeta.DrawnObject.Background and elementMeta.DrawnObject.Background.Visible ~= false) or 
+                            (elementMeta.DrawnObject.Remove and elementMeta.DrawnObject.Visible ~= false)) -- Check if it's a single drawing object
+                        or true) -- Fallback if DrawnObject is complex or visibility not directly applicable
+            end -- This 'end' closes the IsActive anonymous function
         })
     end
     return elementMeta
-end
+end -- This 'end' closes 'addElementToTab' function
 
 function MayhemLib:CreateLabel(tabData, text)
     local h = 20
@@ -478,32 +480,28 @@ function MayhemLib:CreateLabel(tabData, text)
         Text = text, FontName = Config.FontName, Color = Config.TextColor, TextSize = 14,
         XAlignment = "Left", YAlignment = "Top", 
     })
-    -- For labels, DrawnObject is the text itself. No separate background managed by default here.
     return addElementToTab(tabData, {Type = "Label", DrawnObject = drawnText, Text = text}, h)
-end
+end -- This 'end' closes MayhemLib:CreateLabel
 
 function MayhemLib:CreateButton(tabData, text, callback)
     local h = 30
-    -- Base positions for layout within the tab (will be set by addElementToTab)
     local elX_relative = 0 
     local elY_relative = 0 
     local elWidth = activeWindow.ContentContainerSize.X - Config.ElementPadding * 2
 
-    -- The positions here are relative to the element's own container, which will be placed by addElementToTab
     local buttonComposite = {
         Background = DrawingAPI.CreateFrame({
-            Position = Vector2.new(elX_relative, elY_relative), Size = Vector2.new(elWidth, h), -- Position will be set by addElementToTab
+            Position = Vector2.new(elX_relative, elY_relative), Size = Vector2.new(elWidth, h),
             Color = Config.AccentColor, CornerRadius = Config.CornerRadius,
         }),
         Text = DrawingAPI.CreateText({
-            Position = Vector2.new(elX_relative + elWidth/2, elY_relative + h/2), Text = text, FontName = Config.FontName, -- Position relative to Background, then all shifted by addElementToTab
+            Position = Vector2.new(elX_relative + elWidth/2, elY_relative + h/2), Text = text, FontName = Config.FontName,
             Color = Color3.fromRGB(255,255,255), TextSize = 14,
             XAlignment = "Center", YAlignment = "Center",
         })
     }
-    -- addElementToTab will handle setting the actual screen positions of these composite parts based on elX, elY of the tab content area.
     return addElementToTab(tabData, {Type = "Button", DrawnObject = buttonComposite, Callback = callback}, h)
-end
+end -- This 'end' closes MayhemLib:CreateButton
 
 
 print("[MayhemLib] Executor UI Library Loaded.")
