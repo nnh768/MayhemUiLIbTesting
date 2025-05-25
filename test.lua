@@ -9,7 +9,7 @@ MayhemLib.__index = MayhemLib
 -- Executor-provided services (adjust if names differ)
 local HttpService = game:GetService("HttpService")
 local UserInputService = game:GetService("UserInputService")
-local RunService = game:GetService("RunService")
+local RunService = game:GetService("RunService") -- For RenderStepped or Heartbeat based tweens
 
 -- Configuration
 local Config = {
@@ -23,13 +23,114 @@ local Config = {
     ElementPadding = 6,
     CornerRadius = 5,
     DraggableAreaHeight = 32,
-    AnimationSpeed = 0.2,
+    AnimationSpeed = 0.2, -- General speed for UI animations
+    LoadingScreenFadeSpeed = 0.5,
+    LoadingScreenProgressAnimSpeed = 0.3,
 }
 
 -- Initialize DrawingAPI as a table first
 local DrawingAPI = {}
 DrawingAPI.ACTIVE_DRAWING_OBJECTS = {} 
 DrawingAPI.NEXT_ZINDEX = 1
+
+-- Simple Tweening Function (manual, as TweenService isn't directly usable with Drawing objects)
+-- This requires RenderStepped connection.
+local activeTweens = {}
+local tweenConnection = nil
+
+local function processTweens()
+    local currentTime = tick()
+    for i = #activeTweens, 1, -1 do
+        local tween = activeTweens[i]
+        local obj = tween.Object
+        local prop = tween.Property
+        
+        if not obj or (obj.Remove and obj.Parent == nil) then -- Object might have been removed
+            table.remove(activeTweens, i)
+        else
+            local elapsed = currentTime - tween.StartTime
+            local alpha = math.min(elapsed / tween.Duration, 1)
+            
+            local currentValue
+            if tween.Type == "Color3" then
+                currentValue = tween.StartValue:Lerp(tween.EndValue, alpha)
+            elseif tween.Type == "Vector2Size" then -- Specific for Vector2 Size (e.g., progress bar)
+                 currentValue = Vector2.new(
+                    tween.StartValue.X + (tween.EndValue.X - tween.StartValue.X) * alpha,
+                    tween.StartValue.Y + (tween.EndValue.Y - tween.StartValue.Y) * alpha
+                )
+            elseif tween.Type == "Transparency" then -- For Text Transparency or Color Alpha (if supported)
+                currentValue = tween.StartValue + (tween.EndValue - tween.StartValue) * alpha
+            else -- Number
+                currentValue = tween.StartValue + (tween.EndValue - tween.StartValue) * alpha
+            end
+
+            pcall(function() 
+                if prop == "Transparency" and obj.Color then -- Attempt to tween alpha of Color3
+                    obj.Color = Color3.new(obj.Color.R, obj.Color.G, obj.Color.B) -- Create new Color3 if needed
+                    obj.Transparency = currentValue -- Some drawing libs might have direct Transparency
+                elseif prop == "TextTransparency" and obj.TextColor then -- Synapse specific for text
+                    obj.TextColor = Color3.new(obj.TextColor.R, obj.TextColor.G, obj.TextColor.B)
+                    obj.TextTransparency = currentValue
+                else
+                    obj[prop] = currentValue
+                end
+            end)
+
+            if alpha >= 1 then
+                table.remove(activeTweens, i)
+                if tween.Callback then pcall(tween.Callback) end
+            end
+        end
+    end
+    if #activeTweens == 0 and tweenConnection then
+        tweenConnection:Disconnect()
+        tweenConnection = nil
+    end
+end
+
+local function createTween(object, property, endValue, duration, typeOverride, callback)
+    if not object or not object[property] and not (property == "Transparency" and object.Color) and not (property == "TextTransparency" and object.TextColor) then 
+        -- print("Tween target or property invalid:", object, property)
+        if callback then pcall(callback) end -- Call callback immediately if tween can't run
+        return 
+    end
+
+    local startValue
+    local tweenType = typeOverride
+    if property == "Transparency" and object.Color then
+        startValue = object.Transparency or 0
+        tweenType = "Transparency"
+    elseif property == "TextTransparency" and object.TextColor then
+        startValue = object.TextTransparency or 0
+        tweenType = "TextTransparency"
+    else
+        startValue = object[property]
+    end
+
+    if not tweenType then
+        if typeof(startValue) == "Color3" then tweenType = "Color3"
+        elseif typeof(startValue) == "Vector2" and property == "Size" then tweenType = "Vector2Size"
+        else tweenType = "Number" end
+    end
+    
+    -- Remove existing tweens on the same object and property
+    for i = #activeTweens, 1, -1 do
+        if activeTweens[i].Object == object and activeTweens[i].Property == property then
+            table.remove(activeTweens, i)
+        end
+    end
+
+    table.insert(activeTweens, {
+        Object = object, Property = property, StartValue = startValue, EndValue = endValue,
+        StartTime = tick(), Duration = duration, Callback = callback, Type = tweenType
+    })
+
+    if not tweenConnection or not tweenConnection.Connected then
+        tweenConnection = RunService.RenderStepped:Connect(processTweens)
+    end
+end
+
 
 DrawingAPI._track = function(obj)
     if not obj then print("Warning: _track received nil object") return nil end
@@ -50,6 +151,7 @@ DrawingAPI.CreateFrame = function(properties)
     obj.Rounding = properties.CornerRadius or 0
     obj.Filled = true
     obj.Thickness = 1
+    if properties.Transparency then obj.Transparency = properties.Transparency end -- For initial fade-in
     return DrawingAPI._track(obj) 
 end
 
@@ -76,6 +178,7 @@ DrawingAPI.CreateText = function(properties)
     end
     obj.YAlignment = yAlignEnum
     obj.Outline = false
+    if properties.TextTransparency then obj.TextTransparency = properties.TextTransparency end
     return DrawingAPI._track(obj) 
 end
 
@@ -93,45 +196,63 @@ end
 
 function MayhemLib:ShowLoadingScreen(optionalScriptToLoadUrl, callbackOnFinish)
     DrawingAPI.ClearAll() 
+    DrawingAPI.NEXT_ZINDEX = 1000 -- High ZIndex for loading screen
 
-    local screenW, screenH = workspace.CurrentCamera.ViewportSize.X, workspace.CurrentCamera.ViewportSize.Y
+    local panelWidth, panelHeight = 300, 150
+    local screenS = workspace.CurrentCamera.ViewportSize
+    local panelX, panelY = (screenS.X - panelWidth) / 2, (screenS.Y - panelHeight) / 2
+    
     local elements = {} 
 
     elements.Background = DrawingAPI.CreateFrame({
-        Name = "LoadingBackground", Position = Vector2.new(0, 0), Size = Vector2.new(screenW, screenH),
-        Color = Config.BackgroundColor,
+        Name = "LoadingPanel", Position = Vector2.new(panelX, panelY), Size = Vector2.new(panelWidth, panelHeight),
+        Color = Config.BackgroundColor, CornerRadius = Config.CornerRadius + 2, Transparency = 1 -- Start transparent
     })
 
     elements.Title = DrawingAPI.CreateText({
-        Name = "LoadingTitle", Text = "MAYHEM", FontName = "GothamBlack", TextSize = 60,
-        Color = Config.AccentColor, Position = Vector2.new(screenW / 2, screenH * 0.35),
-        XAlignment = "Center", YAlignment = "Center",
+        Name = "LoadingTitle", Text = "MAYHEM", FontName = "GothamBlack", TextSize = 32,
+        Color = Config.AccentColor, Position = Vector2.new(panelX + panelWidth / 2, panelY + 35),
+        XAlignment = "Center", YAlignment = "Center", TextTransparency = 1
     })
     
     elements.Status = DrawingAPI.CreateText({
-        Name = "LoadingStatus", Text = "Initializing...", FontName = Config.FontName, TextSize = 18,
-        Color = Config.TextColor, Position = Vector2.new(screenW / 2, screenH * 0.5 + 10),
-        XAlignment = "Center", YAlignment = "Center",
+        Name = "LoadingStatus", Text = "Initializing...", FontName = Config.FontName, TextSize = 14,
+        Color = Config.TextColor, Position = Vector2.new(panelX + panelWidth / 2, panelY + panelHeight - 55),
+        XAlignment = "Center", YAlignment = "Center", TextTransparency = 1
     })
 
-    local barW, barH = screenW * 0.3, 8
-    local barX, barY = screenW / 2 - barW / 2, screenH * 0.5 + 50
+    local barW, barH = panelWidth * 0.7, 6
+    local barX, barY = panelX + (panelWidth - barW) / 2, panelY + panelHeight - 30
 
     elements.ProgressBarOutline = DrawingAPI.CreateFrame({
         Name = "LoadingBarOutline", Position = Vector2.new(barX, barY), Size = Vector2.new(barW, barH),
-        Color = Config.SecondaryBackgroundColor, CornerRadius = Config.CornerRadius / 2,
+        Color = Config.SecondaryBackgroundColor, CornerRadius = barH / 2, Transparency = 1
     })
 
     elements.ProgressBarFill = DrawingAPI.CreateFrame({
         Name = "LoadingBarFill", Position = Vector2.new(barX, barY), Size = Vector2.new(0, barH),
-        Color = Config.AccentColor, CornerRadius = Config.CornerRadius / 2,
+        Color = Config.AccentColor, CornerRadius = barH / 2, Transparency = 1
     })
+
+    -- Fade In Animation
+    for _, el in pairs(elements) do
+        if el.Transparency ~= nil then -- For Frames
+            createTween(el, "Transparency", 0, Config.LoadingScreenFadeSpeed)
+        elseif el.TextTransparency ~= nil then -- For Text
+            createTween(el, "TextTransparency", 0, Config.LoadingScreenFadeSpeed)
+        end
+    end
+    
+    task.wait(Config.LoadingScreenFadeSpeed + 0.1) -- Wait for fade in
 
     coroutine.wrap(function()
         local function updateProgress(percentage, statusText)
             if elements.Status and elements.Status.Text then elements.Status.Text = statusText end
-            if elements.ProgressBarFill and elements.ProgressBarFill.Size then elements.ProgressBarFill.Size = Vector2.new(barW * percentage, barH) end
-            task.wait(0.05)
+            if elements.ProgressBarFill and elements.ProgressBarFill.Size then
+                -- Animate the progress bar fill
+                createTween(elements.ProgressBarFill, "Size", Vector2.new(barW * percentage, barH), Config.LoadingScreenProgressAnimSpeed, "Vector2Size")
+            end
+            task.wait(Config.LoadingScreenProgressAnimSpeed) -- Wait for anim to mostly complete
         end
 
         updateProgress(0.1, "Initializing...")
@@ -141,21 +262,22 @@ function MayhemLib:ShowLoadingScreen(optionalScriptToLoadUrl, callbackOnFinish)
         
         if optionalScriptToLoadUrl and optionalScriptToLoadUrl ~= "" then
             updateProgress(0.6, "Fetching Remote Script...")
-            local success, contentOrErr = pcall(function()
+            -- ... (HTTP fetching logic remains the same) ...
+             local success, contentOrErr = pcall(function()
                 if syn and syn.request then
                      local response = syn.request({Url = optionalScriptToLoadUrl, Method = "GET"})
                      if response.StatusCode == 200 then return response.Body else error(response.StatusMessage .. " (Code: " .. response.StatusCode .. ")") end
-                elseif HttpService then -- Less likely to work directly in executors but good fallback logic
+                elseif HttpService then 
                     return HttpService:GetAsync(optionalScriptToLoadUrl, true)
-                elseif typeof and typeof(HttpGet) == "function" then -- Check for global HttpGet
+                elseif typeof and typeof(HttpGet) == "function" then 
                     return HttpGet(optionalScriptToLoadUrl)
-                elseif getgenv and getgenv().HttpGet then -- Check for getgenv().HttpGet
+                elseif getgenv and getgenv().HttpGet then 
                     return getgenv().HttpGet(optionalScriptToLoadUrl)
                 else
                     error("No suitable HTTP request function found in environment.")
                 end
             end)
-            task.wait(0.2)
+            task.wait(0.1) -- Short wait after pcall
 
             if success then
                 updateProgress(0.8, "Executing Script...")
@@ -186,17 +308,41 @@ function MayhemLib:ShowLoadingScreen(optionalScriptToLoadUrl, callbackOnFinish)
             updateProgress(1.0, "Ready!")
         end
         
-        task.wait(0.3)
+        task.wait(0.5) -- Display "Ready!" or final status for a moment
+
+        -- Fade Out Animation
+        local fadeOutCompletedCount = 0
+        local totalFadeOutElements = 0
+        for _, el in pairs(elements) do totalFadeOutElements = totalFadeOutElements + 1 end
+
+        local function onElementFadedOut()
+            fadeOutCompletedCount = fadeOutCompletedCount + 1
+            if fadeOutCompletedCount >= totalFadeOutElements then
+                -- All elements faded, now remove them
+                for _, elToRemove in pairs(elements) do
+                    if elToRemove and elToRemove.Remove then pcall(elToRemove.Remove, elToRemove) end
+                end
+                elements = {} -- Clear the table
+                if callbackOnFinish then pcall(callbackOnFinish) end
+            end
+        end
 
         for _, el in pairs(elements) do
-            if el and el.Remove then pcall(el.Remove, el) end
+            if el.Transparency ~= nil then
+                createTween(el, "Transparency", 1, Config.LoadingScreenFadeSpeed, nil, onElementFadedOut)
+            elseif el.TextTransparency ~= nil then
+                createTween(el, "TextTransparency", 1, Config.LoadingScreenFadeSpeed, nil, onElementFadedOut)
+            else -- If no transparency property, count it as "faded" immediately for removal logic
+                onElementFadedOut() 
+            end
         end
-        elements = {} 
-
-        if callbackOnFinish then pcall(callbackOnFinish) end
+        -- The removal and callbackOnFinish are now handled by onElementFadedOut
     end)()
-end -- This 'end' closes MayhemLib:ShowLoadingScreen
+end
 
+
+-- ... (Rest of MayhemLib: activeWindow, destroyCurrentWindowGFX, CreateWindow, CreateTab, addElementToTab, CreateLabel, CreateButton, etc. remains the same) ...
+-- Copy the rest of the functions from the previous complete code block. I'll paste it below for completeness.
 
 local activeWindow = {
     CurrentPos = Vector2.new(0,0), Size = Vector2.new(0,0),
@@ -227,13 +373,12 @@ local function destroyCurrentWindowGFX()
     activeWindow.WindowFrame = nil; activeWindow.TitleBar = nil; activeWindow.TitleText = nil;
     activeWindow.CloseButton = {}; activeWindow.Tabs = {}; activeWindow.ActiveTab = nil;
     activeWindow.ContentFrame = nil;
-    if MayhemLib._Clickables then -- Check if _Clickables exists before clearing
+    if MayhemLib._Clickables then 
         MayhemLib._Clickables = {} 
     end
 end
 
-
-function MayhemLib:CreateWindow(title, width, height) -- Line ~230
+function MayhemLib:CreateWindow(title, width, height)
     destroyCurrentWindowGFX() 
     DrawingAPI.NEXT_ZINDEX = 100 
 
@@ -303,19 +448,18 @@ function MayhemLib:CreateWindow(title, width, height) -- Line ~230
                     activeWindow.IsDragging = true
                     activeWindow.DragStartMouse = mousePos
                     activeWindow.DragStartPos = activeWindow.CurrentPos
-                end -- Removed 'return' here to allow clickables check even if drag starts
+                end
                 
                 if not activeWindow.IsDragging and MayhemLib._Clickables then
-                    for i = #MayhemLib._Clickables, 1, -1 do -- Iterate backwards for safe removal if needed, though not done here
+                    for i = #MayhemLib._Clickables, 1, -1 do 
                         local clickable = MayhemLib._Clickables[i]
                         if clickable.IsActive() and clickable.Bounds:Contains(mousePos) then
                             pcall(clickable.Callback)
-                            -- break -- Consider if only one clickable should fire
                         end
                     end
                 end
             end
-        end) -- This 'end' closes the InputBegan anonymous function
+        end) 
         
         UserInputService.InputChanged:Connect(function(input)
             if activeWindow.IsDragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
@@ -347,20 +491,20 @@ function MayhemLib:CreateWindow(title, width, height) -- Line ~230
                     updateElementPositionRecursive(elRef, actualDelta)
                 end
             end
-        end) -- This 'end' closes the InputChanged anonymous function
+        end) 
 
         UserInputService.InputEnded:Connect(function(input)
             if input.UserInputType == Enum.UserInputType.MouseButton1 then
                 activeWindow.IsDragging = false
             end
-        end) -- This 'end' closes the InputEnded anonymous function
+        end) 
         MayhemLib._WindowInputConnected = true
-    end -- This 'end' closes 'if not MayhemLib._WindowInputConnected then'
+    end 
     
     return MayhemLib
-end -- <<<< THIS IS THE CRITICAL 'end' that closes MayhemLib:CreateWindow (around line 230)
+end 
 
-if not MayhemLib._Clickables then -- Ensure _Clickables is initialized if not already (e.g. if CreateWindow wasn't called first)
+if not MayhemLib._Clickables then 
     MayhemLib._Clickables = {} 
 end
 local tabButtonWidth = 100
@@ -418,7 +562,7 @@ function MayhemLib:CreateTab(windowRefIgnored, title)
             end
         end
         activeWindow.ActiveTab = tabData
-    end -- This 'end' closes 'setActive' function
+    end 
     
     table.insert(MayhemLib._Clickables, {Bounds = tabData.Button.Bounds, Callback = setActive, IsActive = function() return activeWindow.WindowFrame ~= nil and activeWindow.WindowFrame.Visible ~= false end})
 
@@ -426,7 +570,7 @@ function MayhemLib:CreateTab(windowRefIgnored, title)
     if not activeWindow.ActiveTab then setActive() end
 
     return tabData
-end -- This 'end' closes MayhemLib:CreateTab
+end 
 
 local function addElementToTab(tabData, elementMeta, height)
     if not tabData then print("Invalid tab for AddElement."); return nil end
@@ -450,7 +594,7 @@ local function addElementToTab(tabData, elementMeta, height)
             if dObj.Visible ~= nil then dObj.Visible = tabData.IsActive end
             table.insert(activeWindow.DrawnElementsInWindow, dObj) 
         end
-    end -- This 'end' closes 'setupDrawnObject' function
+    end 
 
     setupDrawnObject(elementMeta.DrawnObject, type(elementMeta.DrawnObject) == "table" and not elementMeta.DrawnObject.Remove)
     
@@ -461,18 +605,18 @@ local function addElementToTab(tabData, elementMeta, height)
         table.insert(MayhemLib._Clickables, {
             Bounds = elementMeta.Bounds,
             Callback = elementMeta.Callback,
-            IsActive = function() -- Line ~485
+            IsActive = function() 
                 return activeWindow.WindowFrame ~= nil and activeWindow.WindowFrame.Visible ~= false and 
                        tabData.IsActive and 
                        (elementMeta.DrawnObject and 
                            ((type(elementMeta.DrawnObject) == "table" and elementMeta.DrawnObject.Background and elementMeta.DrawnObject.Background.Visible ~= false) or 
-                            (elementMeta.DrawnObject.Remove and elementMeta.DrawnObject.Visible ~= false)) -- Check if it's a single drawing object
-                        or true) -- Fallback if DrawnObject is complex or visibility not directly applicable
-            end -- This 'end' closes the IsActive anonymous function
+                            (elementMeta.DrawnObject.Remove and elementMeta.DrawnObject.Visible ~= false)) 
+                        or true) 
+            end 
         })
     end
     return elementMeta
-end -- This 'end' closes 'addElementToTab' function
+end 
 
 function MayhemLib:CreateLabel(tabData, text)
     local h = 20
@@ -481,7 +625,7 @@ function MayhemLib:CreateLabel(tabData, text)
         XAlignment = "Left", YAlignment = "Top", 
     })
     return addElementToTab(tabData, {Type = "Label", DrawnObject = drawnText, Text = text}, h)
-end -- This 'end' closes MayhemLib:CreateLabel
+end 
 
 function MayhemLib:CreateButton(tabData, text, callback)
     local h = 30
@@ -501,8 +645,8 @@ function MayhemLib:CreateButton(tabData, text, callback)
         })
     }
     return addElementToTab(tabData, {Type = "Button", DrawnObject = buttonComposite, Callback = callback}, h)
-end -- This 'end' closes MayhemLib:CreateButton
+end 
 
 
-print("[MayhemLib] Executor UI Library Loaded.")
+print("[MayhemLib] Executor UI Library Loaded. (v LoadingScreen Update)")
 return MayhemLib
